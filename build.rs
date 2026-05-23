@@ -61,8 +61,35 @@ fn main() {
             }
         }
 
+        // Probe for Windows native compilation
+        if target_os == "windows" {
+            // Read CPUID only when compiling natively on Windows and host/target architecture is x86_64
+            if std::env::consts::OS == "windows" 
+                && env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "x86_64" 
+                && std::env::consts::ARCH == "x86_64" 
+            {
+                if !host_supports_la57() {
+                    // If the CPU hardware does not support 5-level paging, the address space is 100% guaranteed to be <= 48-bit
+                    println!("cargo:rustc-cfg=virt_addr_48");
+                    println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Windows CPU does not support la57 (5-level paging), enabling 48-bit virtual address layout (16-bit tag).");
+                    return;
+                }
+            }
+        }
+
         // Default to conservative 57-bit virtual address layout (8-bit tag) for safety if unable to determine
         println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Unable to determine virtual address space limits, defaulting to conservative 57-bit layout (8-bit tag).");
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn host_supports_la57() -> bool {
+    let cpuid = std::arch::x86_64::__cpuid_count(7, 0);
+    (cpuid.ebx & (1 << 16)) != 0
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn host_supports_la57() -> bool {
+    false
 }
 
