@@ -12,7 +12,7 @@ extern crate std;
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-use atomic_tagged_ptr::AtomicTaggedPtr;
+use atomic_tagged_ptr::{AtomicTaggedPtr, Tag};
 
 
 // --- 1. Simulation of High 57-bit (5-Level Paging) Address Integrity ---
@@ -41,7 +41,7 @@ fn test_57bit_virtual_address_integrity() {
             // Store with arbitrary tags
             atom.store(
                 NonNull::new(original_addr as *mut i32),
-                tag,
+                Tag::new(tag),
                 Ordering::Release,
             );
 
@@ -57,7 +57,7 @@ fn test_57bit_virtual_address_integrity() {
 
             // Verify tag is correctly masked under the current platform layout
             assert_eq!(
-                loaded_tag,
+                loaded_tag.value(),
                 tag & atomic_tagged_ptr::TAG_MASK,
                 "Tag mismatch for tag value {:#X}",
                 tag
@@ -198,4 +198,3 @@ mod concurrent_tests {
         assert!(stack.pop().is_none());
     }
 }
-

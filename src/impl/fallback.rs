@@ -19,12 +19,13 @@ use core::ptr::NonNull;
 #[cfg(feature = "std")]
 use std::sync::Mutex;
 use core::sync::atomic::Ordering;
+use super::Tag;
 
 pub const TAG_MASK: usize = usize::MAX;
 
 /// A Mutex-synchronized safe implementation of `AtomicTaggedPtr` for fallback targets.
 pub(crate) struct AtomicTaggedPtrImpl<T> {
-    inner: Mutex<(Option<NonNull<T>>, usize)>,
+    inner: Mutex<(Option<NonNull<T>>, Tag)>,
     _marker: PhantomData<*mut T>,
 }
 
@@ -37,7 +38,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn new(ptr: Option<NonNull<T>>) -> Self {
         Self {
-            inner: Mutex::new((ptr, 0)),
+            inner: Mutex::new((ptr, Tag::new(0))),
             _marker: PhantomData,
         }
     }
@@ -47,14 +48,14 @@ impl<T> AtomicTaggedPtrImpl<T> {
     /// The `Ordering` argument is respected from a logical standpoint but does not influence
     /// lock synchronization which operates under exclusive mutex state transitions.
     #[inline]
-    pub(crate) fn load(&self, _order: Ordering) -> (Option<NonNull<T>>, usize) {
+    pub(crate) fn load(&self, _order: Ordering) -> (Option<NonNull<T>>, Tag) {
         let guard = self.inner.lock().unwrap();
         *guard
     }
 
     /// Atomically stores a new tagged pointer.
     #[inline]
-    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: usize, _order: Ordering) {
+    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: Tag, _order: Ordering) {
         let mut guard = self.inner.lock().unwrap();
         *guard = (ptr, tag);
     }
@@ -65,8 +66,8 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn compare_exchange(
         &self,
-        current: (Option<NonNull<T>>, usize),
-        new: (Option<NonNull<T>>, usize),
+        current: (Option<NonNull<T>>, Tag),
+        new: (Option<NonNull<T>>, Tag),
         _success: Ordering,
         _failure: Ordering,
     ) -> super::TaggedPtrResult<T> {
@@ -87,8 +88,8 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn compare_exchange_weak(
         &self,
-        current: (Option<NonNull<T>>, usize),
-        new: (Option<NonNull<T>>, usize),
+        current: (Option<NonNull<T>>, Tag),
+        new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
     ) -> super::TaggedPtrResult<T> {
@@ -108,12 +109,12 @@ mod tests {
 
         let loaded = atom.load(Ordering::Relaxed);
         assert_eq!(loaded.0, ptr);
-        assert_eq!(loaded.1, 0);
+        assert_eq!(loaded.1.value(), 0);
 
-        atom.store(None, 456, Ordering::Relaxed);
+        atom.store(None, Tag::new(456), Ordering::Relaxed);
         let loaded_after = atom.load(Ordering::Relaxed);
         assert!(loaded_after.0.is_none());
-        assert_eq!(loaded_after.1, 456);
+        assert_eq!(loaded_after.1.value(), 456);
     }
 
     #[test]
@@ -127,18 +128,18 @@ mod tests {
 
         // CAS should fail because expected tag (999) does not match actual tag (0)
         let cas_fail =
-            atom.compare_exchange((ptr1, 999), (ptr2, 100), Ordering::SeqCst, Ordering::SeqCst);
+            atom.compare_exchange((ptr1, Tag::new(999)), (ptr2, Tag::new(100)), Ordering::SeqCst, Ordering::SeqCst);
         assert!(cas_fail.is_err());
-        assert_eq!(cas_fail.unwrap_err(), (ptr1, 0));
+        assert_eq!(cas_fail.unwrap_err(), (ptr1, Tag::new(0)));
 
         // CAS should succeed because both pointer and tag match perfectly
         let cas_success =
-            atom.compare_exchange((ptr1, 0), (ptr2, 200), Ordering::SeqCst, Ordering::SeqCst);
+            atom.compare_exchange((ptr1, Tag::new(0)), (ptr2, Tag::new(200)), Ordering::SeqCst, Ordering::SeqCst);
         assert!(cas_success.is_ok());
-        assert_eq!(cas_success.unwrap(), (ptr1, 0));
+        assert_eq!(cas_success.unwrap(), (ptr1, Tag::new(0)));
 
         let loaded = atom.load(Ordering::Acquire);
         assert_eq!(loaded.0, ptr2);
-        assert_eq!(loaded.1, 200);
+        assert_eq!(loaded.1.value(), 200);
     }
 }

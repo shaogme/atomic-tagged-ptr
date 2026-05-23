@@ -13,6 +13,7 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use super::Tag;
 
 /// Masks for bitwise packing and unpacking.
 #[cfg(virt_addr_48)]
@@ -67,7 +68,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     /// The tag value will be truncated to fit the high 8 bits (modulo 256).
     /// The pointer address must reside within the valid 56-bit user-space memory limits.
     #[inline]
-    fn pack(ptr: *const T, tag: usize) -> usize {
+    fn pack(ptr: *const T, tag: Tag) -> usize {
         let ptr_val = ptr as usize;
         // Verify pointer doesn't spill into the tag region under debug mode
         debug_assert_eq!(
@@ -76,15 +77,15 @@ impl<T> AtomicTaggedPtrImpl<T> {
             "Attempted to pack a pointer exceeding the limits!"
         );
 
-        let truncated_tag = tag & TAG_MASK;
+        let truncated_tag = tag.value() & TAG_MASK;
         (truncated_tag << TAG_SHIFT) | (ptr_val & PTR_MASK)
     }
 
     /// Unpacks a 64-bit `usize` value into its component pointer and tag.
     #[inline]
-    fn unpack(bits: usize) -> (Option<NonNull<T>>, usize) {
+    fn unpack(bits: usize) -> (Option<NonNull<T>>, Tag) {
         let ptr_val = bits & PTR_MASK;
-        let tag = bits >> TAG_SHIFT;
+        let tag = Tag::new(bits >> TAG_SHIFT);
 
         let ptr = if ptr_val == 0 {
             None
@@ -100,7 +101,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     ///
     /// Memory ordering must be one of `Acquire`, `Relaxed`, or `SeqCst`.
     #[inline]
-    pub(crate) fn load(&self, order: Ordering) -> (Option<NonNull<T>>, usize) {
+    pub(crate) fn load(&self, order: Ordering) -> (Option<NonNull<T>>, Tag) {
         let bits = self.bits.load(order);
         Self::unpack(bits)
     }
@@ -109,7 +110,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     ///
     /// Memory ordering must be one of `Release`, `Relaxed`, or `SeqCst`.
     #[inline]
-    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: usize, order: Ordering) {
+    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: Tag, order: Ordering) {
         let raw_ptr = ptr
             .map(|p| p.as_ptr() as *const T)
             .unwrap_or(core::ptr::null());
@@ -123,8 +124,8 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn compare_exchange(
         &self,
-        current: (Option<NonNull<T>>, usize),
-        new: (Option<NonNull<T>>, usize),
+        current: (Option<NonNull<T>>, Tag),
+        new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
     ) -> super::TaggedPtrResult<T> {
@@ -155,8 +156,8 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn compare_exchange_weak(
         &self,
-        current: (Option<NonNull<T>>, usize),
-        new: (Option<NonNull<T>>, usize),
+        current: (Option<NonNull<T>>, Tag),
+        new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
     ) -> super::TaggedPtrResult<T> {
@@ -191,16 +192,16 @@ mod tests {
         let val = 42;
         let ptr = NonNull::new(&val as *const i32 as *mut i32);
 
-        let packed = AtomicTaggedPtrImpl::pack(ptr.unwrap().as_ptr(), 12);
+        let packed = AtomicTaggedPtrImpl::pack(ptr.unwrap().as_ptr(), Tag::new(12));
         let (unpacked_ptr, tag) = AtomicTaggedPtrImpl::unpack(packed);
 
-        assert_eq!(tag, 12);
+        assert_eq!(tag, Tag::new(12));
         assert_eq!(unpacked_ptr, ptr);
 
         // Null pointer packing test
-        let packed_null = AtomicTaggedPtrImpl::pack(core::ptr::null::<i32>(), 250);
+        let packed_null = AtomicTaggedPtrImpl::pack(core::ptr::null::<i32>(), Tag::new(250));
         let (unpacked_null, tag_null) = AtomicTaggedPtrImpl::<i32>::unpack(packed_null);
-        assert_eq!(tag_null, 250);
+        assert_eq!(tag_null, Tag::new(250));
         assert!(unpacked_null.is_none());
     }
 
@@ -211,7 +212,7 @@ mod tests {
         #[cfg(not(virt_addr_48))]
         let high_addr = 0x007F_FFFF_FFFF_F000 as *const i32;
 
-        let tag = 177;
+        let tag = Tag::new(177);
 
         let packed = AtomicTaggedPtrImpl::<i32>::pack(high_addr, tag);
         let (unpacked_ptr, unpacked_tag) = AtomicTaggedPtrImpl::<i32>::unpack(packed);
@@ -231,17 +232,17 @@ mod tests {
 
         let loaded = atom.load(Ordering::Acquire);
         assert_eq!(loaded.0, ptr);
-        assert_eq!(loaded.1, 0);
+        assert_eq!(loaded.1, Tag::new(0));
 
         let new_value = 200;
         let new_ptr = NonNull::new(&new_value as *const i32 as *mut i32);
 
         let cas_res =
-            atom.compare_exchange((ptr, 0), (new_ptr, 1), Ordering::SeqCst, Ordering::SeqCst);
+            atom.compare_exchange((ptr, Tag::new(0)), (new_ptr, Tag::new(1)), Ordering::SeqCst, Ordering::SeqCst);
 
         assert!(cas_res.is_ok());
         let loaded_new = atom.load(Ordering::Acquire);
         assert_eq!(loaded_new.0, new_ptr);
-        assert_eq!(loaded_new.1, 1);
+        assert_eq!(loaded_new.1, Tag::new(1));
     }
 }

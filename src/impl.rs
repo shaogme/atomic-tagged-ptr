@@ -38,10 +38,12 @@ mod ptr32;
 #[cfg(atomic_fallback)]
 mod fallback;
 
-// --- Type Alias to satisfy Clippy type_complexity ---
-
-/// Type alias representing the result of atomic compare and exchange operations.
-pub type TaggedPtrResult<T> = Result<(Option<NonNull<T>>, usize), (Option<NonNull<T>>, usize)>;
+/// Represents a generation tag used for ABA protection in `AtomicTaggedPtr`.
+///
+/// `Tag` wraps a platform-specific generation count and ensures that any operations
+/// (like wrapping addition or creation) respect the hardware platform's limits and bit-width.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Tag(pub(crate) usize);
 
 // --- Exposing Unified High-Level Struct ---
 
@@ -53,6 +55,61 @@ pub use ptr32::TAG_MASK;
 
 #[cfg(atomic_fallback)]
 pub use fallback::TAG_MASK;
+
+impl Tag {
+    /// Creates a new `Tag` from a raw value, applying the platform-specific mask.
+    #[inline]
+    pub const fn new(value: usize) -> Self {
+        Self(value & TAG_MASK)
+    }
+
+    /// Gets the raw tag value.
+    #[inline]
+    pub const fn value(self) -> usize {
+        self.0
+    }
+
+    /// Performs wrapping addition on the tag value.
+    #[inline]
+    pub const fn wrapping_add(self, rhs: usize) -> Self {
+        Self::new(self.0.wrapping_add(rhs))
+    }
+
+    /// Returns the maximum tag value allowed on this platform.
+    #[inline]
+    pub const fn max_value() -> Self {
+        Self(TAG_MASK)
+    }
+}
+
+impl fmt::Debug for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Tag({:#X})", self.0)
+    }
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<usize> for Tag {
+    #[inline]
+    fn from(value: usize) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Tag> for usize {
+    #[inline]
+    fn from(tag: Tag) -> usize {
+        tag.0
+    }
+}
+
+/// Type alias representing the result of atomic compare and exchange operations.
+pub type TaggedPtrResult<T> = Result<(Option<NonNull<T>>, Tag), (Option<NonNull<T>>, Tag)>;
 
 /// A platform-adaptive atomic tagged pointer supporting thread-safe ABA protection.
 pub struct AtomicTaggedPtr<T> {
@@ -103,7 +160,7 @@ impl<T> AtomicTaggedPtr<T> {
     ///
     /// Panics if `order` is `Release` or `AcqRel`.
     #[inline]
-    pub fn load(&self, order: Ordering) -> (Option<NonNull<T>>, usize) {
+    pub fn load(&self, order: Ordering) -> (Option<NonNull<T>>, Tag) {
         self.inner.load(order)
     }
 
@@ -113,7 +170,7 @@ impl<T> AtomicTaggedPtr<T> {
     ///
     /// Panics if `order` is `Acquire` or `AcqRel`.
     #[inline]
-    pub fn store(&self, ptr: Option<NonNull<T>>, tag: usize, order: Ordering) {
+    pub fn store(&self, ptr: Option<NonNull<T>>, tag: Tag, order: Ordering) {
         self.inner.store(ptr, tag, order);
     }
 
@@ -124,8 +181,8 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn compare_exchange(
         &self,
-        current: (Option<NonNull<T>>, usize),
-        new: (Option<NonNull<T>>, usize),
+        current: (Option<NonNull<T>>, Tag),
+        new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
     ) -> TaggedPtrResult<T> {
@@ -139,8 +196,8 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn compare_exchange_weak(
         &self,
-        current: (Option<NonNull<T>>, usize),
-        new: (Option<NonNull<T>>, usize),
+        current: (Option<NonNull<T>>, Tag),
+        new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
     ) -> TaggedPtrResult<T> {
@@ -180,7 +237,7 @@ mod tests {
         let atom: AtomicTaggedPtr<i32> = Default::default();
         let (ptr, tag) = atom.load(Ordering::Relaxed);
         assert!(ptr.is_none());
-        assert_eq!(tag, 0);
+        assert_eq!(tag, Tag::new(0));
     }
 
     #[test]
@@ -188,11 +245,11 @@ mod tests {
         let val = 12345;
         let ptr = NonNull::new(&val as *const i32 as *mut i32);
         let atom = AtomicTaggedPtr::new(ptr);
-        atom.store(ptr, 88, Ordering::Relaxed);
+        atom.store(ptr, Tag::new(88), Ordering::Relaxed);
 
         let debug_str = format!("{:?}", atom);
         assert!(debug_str.contains("AtomicTaggedPtr"));
-        assert!(debug_str.contains("tag: 88"));
+        assert!(debug_str.contains("tag: Tag(0x58)"));
     }
 
     #[test]
@@ -209,10 +266,10 @@ mod tests {
         let handle = thread::spawn(move || {
             let loaded = atom_clone.load(Ordering::Acquire);
             let local_ptr = NonNull::new(ptr_usize as *mut i32);
-            if loaded.0 == local_ptr && loaded.1 == 0 {
+            if loaded.0 == local_ptr && loaded.1 == Tag::new(0) {
                 let _ = atom_clone.compare_exchange(
-                    (local_ptr, 0),
-                    (None, 55),
+                    (local_ptr, Tag::new(0)),
+                    (None, Tag::new(55)),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                 );
@@ -223,6 +280,6 @@ mod tests {
         let final_state = atom.load(Ordering::Acquire);
 
         // Assert state was safely transitioned or remained valid
-        assert!(final_state.1 == 55 || final_state.1 == 0);
+        assert!(final_state.1 == Tag::new(55) || final_state.1 == Tag::new(0));
     }
 }
