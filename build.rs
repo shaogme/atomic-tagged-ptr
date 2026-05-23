@@ -46,25 +46,10 @@ fn main() {
             return;
         }
 
-        // Probe for Windows native compilation
-        #[cfg(target_os = "windows")]
-        {
-            if target_os == "windows" {
-                if let Some(max_addr) = detect_windows_max_addr() {
-                    // 0x0000_7FFF_FFFF_FFFF represents 256TB (upper limit of 48-bit address space)
-                    if max_addr <= 0x0000_7FFF_FFFF_FFFF {
-                        println!("cargo:rustc-cfg=virt_addr_48");
-                        println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Windows system uses <= 48-bit virtual address space, enabling 16-bit tag optimization.");
-                        return;
-                    }
-                }
-            }
-        }
-
         // Probe for Linux native compilation
-        #[cfg(target_os = "linux")]
-        {
-            if target_os == "linux" {
+        if target_os == "linux" {
+            // Read cpuinfo only when compiling on Linux and target arch matches host arch
+            if std::env::consts::OS == "linux" && env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == std::env::consts::ARCH {
                 if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
                     if !cpuinfo.contains("la57") {
                         // If la57 is absent, the CPU does not support 5-level paging, so virtual address space is <= 48-bit
@@ -81,31 +66,3 @@ fn main() {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn detect_windows_max_addr() -> Option<usize> {
-    #[repr(C)]
-    struct SystemInfo {
-        w_processor_architecture: u16,
-        w_reserved: u16,
-        dw_page_size: u32,
-        lp_minimum_application_address: *mut std::ffi::c_void,
-        lp_maximum_application_address: *mut std::ffi::c_void,
-        dw_active_processor_mask: usize,
-        dw_number_of_processors: u32,
-        dw_processor_type: u32,
-        dw_allocation_granularity: u32,
-        w_processor_level: u16,
-        w_processor_revision: u16,
-    }
-
-    unsafe extern "system" {
-        fn GetSystemInfo(lpSystemInfo: *mut SystemInfo);
-    }
-
-    let mut sys_info = std::mem::MaybeUninit::<SystemInfo>::uninit();
-    unsafe {
-        GetSystemInfo(sys_info.as_mut_ptr());
-        let sys_info = sys_info.assume_init();
-        Some(sys_info.lp_maximum_application_address as usize)
-    }
-}

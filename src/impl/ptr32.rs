@@ -44,7 +44,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     /// Packs a pointer and a tag into a single 64-bit `u64` value.
     #[inline]
     fn pack(ptr: *const T, tag: Tag) -> u64 {
-        let ptr_val = ptr as u32 as u64;
+        let ptr_val = ptr as usize as u64;
         let tag_val = tag.value() as u64;
         (tag_val << 32) | ptr_val
     }
@@ -52,14 +52,14 @@ impl<T> AtomicTaggedPtrImpl<T> {
     /// Unpacks a 64-bit `u64` value into its component pointer and tag.
     #[inline]
     fn unpack(bits: u64) -> (Option<NonNull<T>>, Tag) {
-        let ptr_val = (bits & 0xFFFFFFFF) as u32;
+        let ptr_val = (bits & 0xFFFFFFFF) as usize;
         let tag = Tag::new((bits >> 32) as usize);
 
         let ptr = if ptr_val == 0 {
             None
         } else {
-            // Safety: The pointer address is safely reconstructed from the lower 32 bits
-            unsafe { Some(NonNull::new_unchecked(ptr_val as *mut T)) }
+            // Safety: The pointer address is safely reconstructed from the lower bits preserving strict provenance
+            unsafe { Some(NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(ptr_val))) }
         };
 
         (ptr, tag)

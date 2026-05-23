@@ -48,15 +48,12 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn new(ptr: Option<NonNull<T>>) -> Self {
         let ptr_val = ptr.map(|p| p.as_ptr() as usize).unwrap_or(0);
-        // Ensure that the initial pointer does not overflow the limits
-        debug_assert_eq!(
-            ptr_val & !PTR_MASK,
-            0,
-            "Pointer address overflows limit!"
-        );
+        if (ptr_val & !PTR_MASK) != 0 {
+            panic!("Pointer address overflows the valid virtual address space limits!");
+        }
 
         Self {
-            bits: AtomicUsize::new(ptr_val & PTR_MASK),
+            bits: AtomicUsize::new(ptr_val),
             _marker: PhantomData,
         }
     }
@@ -65,20 +62,17 @@ impl<T> AtomicTaggedPtrImpl<T> {
     ///
     /// # Safety
     ///
-    /// The tag value will be truncated to fit the high 8 bits (modulo 256).
-    /// The pointer address must reside within the valid 56-bit user-space memory limits.
+    /// The tag value will be truncated to fit the high bits.
+    /// The pointer address must reside within the valid user-space memory limits.
     #[inline]
     fn pack(ptr: *const T, tag: Tag) -> usize {
         let ptr_val = ptr as usize;
-        // Verify pointer doesn't spill into the tag region under debug mode
-        debug_assert_eq!(
-            ptr_val & !PTR_MASK,
-            0,
-            "Attempted to pack a pointer exceeding the limits!"
-        );
+        if (ptr_val & !PTR_MASK) != 0 {
+            panic!("Attempted to pack a pointer exceeding the valid virtual address space limits!");
+        }
 
         let truncated_tag = tag.value() & TAG_MASK;
-        (truncated_tag << TAG_SHIFT) | (ptr_val & PTR_MASK)
+        (truncated_tag << TAG_SHIFT) | ptr_val
     }
 
     /// Unpacks a 64-bit `usize` value into its component pointer and tag.
@@ -90,8 +84,8 @@ impl<T> AtomicTaggedPtrImpl<T> {
         let ptr = if ptr_val == 0 {
             None
         } else {
-            // Safety: The pointer address is safely reconstructed from the lower 56 bits
-            unsafe { Some(NonNull::new_unchecked(ptr_val as *mut T)) }
+            // Safety: The pointer address is safely reconstructed from the lower bits preserving strict provenance
+            unsafe { Some(NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(ptr_val))) }
         };
 
         (ptr, tag)
@@ -244,5 +238,13 @@ mod tests {
         let loaded_new = atom.load(Ordering::Acquire);
         assert_eq!(loaded_new.0, new_ptr);
         assert_eq!(loaded_new.1, Tag::new(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to pack a pointer exceeding the valid virtual address space limits!")]
+    fn test_invalid_high_address_panic() {
+        // Construct an address that definitely exceeds PTR_MASK on either layout
+        let invalid_addr = (!PTR_MASK | 0x1) as *const i32;
+        let _ = AtomicTaggedPtrImpl::pack(invalid_addr, Tag::new(0));
     }
 }

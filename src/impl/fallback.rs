@@ -45,17 +45,19 @@ impl<T> AtomicTaggedPtrImpl<T> {
 
     /// Atomically loads the tagged pointer.
     ///
-    /// The `Ordering` argument is respected from a logical standpoint but does not influence
-    /// lock synchronization which operates under exclusive mutex state transitions.
+    /// Respects the `Ordering` argument by invoking a memory fence.
     #[inline]
-    pub(crate) fn load(&self, _order: Ordering) -> (Option<NonNull<T>>, Tag) {
+    pub(crate) fn load(&self, order: Ordering) -> (Option<NonNull<T>>, Tag) {
         let guard = self.inner.lock().unwrap();
-        *guard
+        let val = *guard;
+        core::sync::atomic::fence(order);
+        val
     }
 
     /// Atomically stores a new tagged pointer.
     #[inline]
-    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: Tag, _order: Ordering) {
+    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: Tag, order: Ordering) {
+        core::sync::atomic::fence(order);
         let mut guard = self.inner.lock().unwrap();
         *guard = (ptr, tag);
     }
@@ -68,16 +70,18 @@ impl<T> AtomicTaggedPtrImpl<T> {
         &self,
         current: (Option<NonNull<T>>, Tag),
         new: (Option<NonNull<T>>, Tag),
-        _success: Ordering,
-        _failure: Ordering,
+        success: Ordering,
+        failure: Ordering,
     ) -> super::TaggedPtrResult<T> {
         let mut guard = self.inner.lock().unwrap();
         let actual = *guard;
 
         if actual.0 == current.0 && actual.1 == current.1 {
+            core::sync::atomic::fence(success);
             *guard = new;
             Ok(actual)
         } else {
+            core::sync::atomic::fence(failure);
             Err(actual)
         }
     }
