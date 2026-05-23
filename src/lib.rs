@@ -11,5 +11,6 @@
 extern crate std;
 
 pub use r#impl::AtomicTaggedPtr;
+pub use r#impl::TAG_MASK;
 
 pub mod r#impl;

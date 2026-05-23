@@ -14,6 +14,8 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub const TAG_MASK: usize = 0xFFFF_FFFF;
+
 /// A 32-bit platform implementation of `AtomicTaggedPtr` leveraging 64-bit atomics.
 ///
 /// Under supported 32-bit architectures, this structure maps atomic operations directly to high-performance

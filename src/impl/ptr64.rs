@@ -15,11 +15,19 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Masks for bitwise packing and unpacking.
-/// Low 56 bits are reserved for the pointer, yielding a max pointer value of `0x00FFFFFFFFFFFFFF`.
-const PTR_MASK: usize = 0x00FF_FFFF_FFFF_FFFF;
+#[cfg(virt_addr_48)]
+pub(crate) const PTR_MASK: usize = 0x0000_FFFF_FFFF_FFFF;
+#[cfg(virt_addr_48)]
+pub(crate) const TAG_SHIFT: usize = 48;
+#[cfg(virt_addr_48)]
+pub const TAG_MASK: usize = 0xFFFF;
 
-/// Tag bitwise shift offset.
-const TAG_SHIFT: usize = 56;
+#[cfg(not(virt_addr_48))]
+pub(crate) const PTR_MASK: usize = 0x00FF_FFFF_FFFF_FFFF;
+#[cfg(not(virt_addr_48))]
+pub(crate) const TAG_SHIFT: usize = 56;
+#[cfg(not(virt_addr_48))]
+pub const TAG_MASK: usize = 0xFF;
 
 /// A 64-bit platform lock-free implementation of `AtomicTaggedPtr`.
 ///
@@ -39,11 +47,11 @@ impl<T> AtomicTaggedPtrImpl<T> {
     #[inline]
     pub(crate) fn new(ptr: Option<NonNull<T>>) -> Self {
         let ptr_val = ptr.map(|p| p.as_ptr() as usize).unwrap_or(0);
-        // Ensure that the initial pointer does not overflow the 56-bit space
+        // Ensure that the initial pointer does not overflow the limits
         debug_assert_eq!(
             ptr_val & !PTR_MASK,
             0,
-            "Pointer address overflows 56-bit limit!"
+            "Pointer address overflows limit!"
         );
 
         Self {
@@ -65,10 +73,10 @@ impl<T> AtomicTaggedPtrImpl<T> {
         debug_assert_eq!(
             ptr_val & !PTR_MASK,
             0,
-            "Attempted to pack a pointer exceeding 56-bit limits!"
+            "Attempted to pack a pointer exceeding the limits!"
         );
 
-        let truncated_tag = tag & 0xFF;
+        let truncated_tag = tag & TAG_MASK;
         (truncated_tag << TAG_SHIFT) | (ptr_val & PTR_MASK)
     }
 
@@ -198,8 +206,11 @@ mod tests {
 
     #[test]
     fn test_high_address_simulation() {
-        // Simulate a 57-bit user-space physical address: 0x007F_FFFF_FFFF_F000
+        #[cfg(virt_addr_48)]
+        let high_addr = 0x0000_7FFF_FFFF_F000 as *const i32;
+        #[cfg(not(virt_addr_48))]
         let high_addr = 0x007F_FFFF_FFFF_F000 as *const i32;
+
         let tag = 177;
 
         let packed = AtomicTaggedPtrImpl::<i32>::pack(high_addr, tag);
@@ -208,7 +219,7 @@ mod tests {
         assert_eq!(unpacked_tag, tag);
         assert_eq!(
             unpacked_ptr.map(|p| p.as_ptr() as usize),
-            Some(0x007F_FFFF_FFFF_F000)
+            Some(high_addr as usize)
         );
     }
 

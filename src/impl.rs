@@ -29,17 +29,13 @@ use std::sync::atomic::Ordering;
 
 // --- Platform Routing Conditional Compile Sections ---
 
-#[cfg(all(target_pointer_width = "64", not(feature = "full-pointer-locking")))]
+#[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
 mod ptr64;
 
-#[cfg(all(target_pointer_width = "32", target_has_atomic = "64", not(feature = "full-pointer-locking")))]
+#[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
 mod ptr32;
 
-#[cfg(any(
-    feature = "full-pointer-locking",
-    all(target_pointer_width = "32", not(target_has_atomic = "64")),
-    not(any(target_pointer_width = "32", target_pointer_width = "64"))
-))]
+#[cfg(atomic_fallback)]
 mod fallback;
 
 // --- Type Alias to satisfy Clippy type_complexity ---
@@ -49,19 +45,24 @@ pub type TaggedPtrResult<T> = Result<(Option<NonNull<T>>, usize), (Option<NonNul
 
 // --- Exposing Unified High-Level Struct ---
 
+#[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
+pub use ptr64::TAG_MASK;
+
+#[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
+pub use ptr32::TAG_MASK;
+
+#[cfg(atomic_fallback)]
+pub use fallback::TAG_MASK;
+
 /// A platform-adaptive atomic tagged pointer supporting thread-safe ABA protection.
 pub struct AtomicTaggedPtr<T> {
-    #[cfg(all(target_pointer_width = "64", not(feature = "full-pointer-locking")))]
+    #[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
     inner: ptr64::AtomicTaggedPtrImpl<T>,
 
-    #[cfg(all(target_pointer_width = "32", target_has_atomic = "64", not(feature = "full-pointer-locking")))]
+    #[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
     inner: ptr32::AtomicTaggedPtrImpl<T>,
 
-    #[cfg(any(
-        feature = "full-pointer-locking",
-        all(target_pointer_width = "32", not(target_has_atomic = "64")),
-        not(any(target_pointer_width = "32", target_pointer_width = "64"))
-    ))]
+    #[cfg(atomic_fallback)]
     inner: fallback::AtomicTaggedPtrImpl<T>,
 }
 
@@ -85,17 +86,13 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn new(ptr: Option<NonNull<T>>) -> Self {
         Self {
-            #[cfg(all(target_pointer_width = "64", not(feature = "full-pointer-locking")))]
+            #[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
             inner: ptr64::AtomicTaggedPtrImpl::new(ptr),
 
-            #[cfg(all(target_pointer_width = "32", target_has_atomic = "64", not(feature = "full-pointer-locking")))]
+            #[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
             inner: ptr32::AtomicTaggedPtrImpl::new(ptr),
 
-            #[cfg(any(
-                feature = "full-pointer-locking",
-                all(target_pointer_width = "32", not(target_has_atomic = "64")),
-                not(any(target_pointer_width = "32", target_pointer_width = "64"))
-            ))]
+            #[cfg(atomic_fallback)]
             inner: fallback::AtomicTaggedPtrImpl::new(ptr),
         }
     }

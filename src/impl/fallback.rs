@@ -13,6 +13,8 @@ use std::ptr::NonNull;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
+pub const TAG_MASK: usize = usize::MAX;
+
 /// A Mutex-synchronized safe implementation of `AtomicTaggedPtr` for fallback targets.
 pub(crate) struct AtomicTaggedPtrImpl<T> {
     inner: Mutex<(Option<NonNull<T>>, usize)>,

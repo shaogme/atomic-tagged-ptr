@@ -17,6 +17,12 @@ use atomic_tagged_ptr::AtomicTaggedPtr;
 fn test_57bit_virtual_address_integrity() {
     // 5-level paging user-space virtual addresses reside inside [0, 0x007F_FFFF_FFFF_FFFF].
     // We construct dummy pointers on these extreme boundary addresses to check for truncation.
+    #[cfg(virt_addr_48)]
+    let extreme_user_space_addresses = [
+        0x0000_0000_0000_1000 as *const i32, // Classic low address
+        0x0000_7FFF_FFFF_F000 as *const i32, // 48-bit ceiling
+    ];
+    #[cfg(not(virt_addr_48))]
     let extreme_user_space_addresses = [
         0x0000_0000_0000_1000 as *const i32, // Classic low address
         0x0000_7FFF_FFFF_F000 as *const i32, // 48-bit ceiling
@@ -45,13 +51,13 @@ fn test_57bit_virtual_address_integrity() {
                 original_addr as usize
             );
 
-            // On 64-bit systems, tag fits in 8 bits (modulo 256).
-            // On 32-bit systems, tag fits fully in 32 bits.
-            if cfg!(target_pointer_width = "64") {
-                assert_eq!(loaded_tag, tag & 0xFF);
-            } else if cfg!(target_pointer_width = "32") {
-                assert_eq!(loaded_tag, tag);
-            }
+            // Verify tag is correctly masked under the current platform layout
+            assert_eq!(
+                loaded_tag,
+                tag & atomic_tagged_ptr::TAG_MASK,
+                "Tag mismatch for tag value {:#X}",
+                tag
+            );
         }
     }
 }
