@@ -1,0 +1,12 @@
+[package]
+name = "atomic-tagged-ptr"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Shao G. <shaogme@gmail.com>"]
+repository = "https://github.com/shaogme/atomic-tagged-ptr"
+description = "A platform-adaptive atomic tagged pointer implementation supporting 32-bit, 48-bit, and 52/57-bit high virtual address layouts with ABA protection."
+
+[features]
+full-pointer-locking = []
+[dependencies]

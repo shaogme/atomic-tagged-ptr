@@ -1,0 +1,198 @@
+//! 32-bit lock-free atomic tagged pointer backend.
+//!
+//! This module implements the `AtomicTaggedPtrImpl` using `AtomicU64` for 32-bit platforms that
+//! native-support 64-bit atomic operations (e.g., ARMv7-A with `ldrd/strd` and x86 i686 with `cmpxchg8b`).
+//! It splits the 64-bit word into two equal parts:
+//! - **High 32 bits**: Used for storing `tag` (generation count) for extremely robust ABA protection
+//!   (4.2 billion generations before wrapping).
+//! - **Low 32 bits**: Used for storing the complete 32-bit pointer address.
+//!
+//! Since pointer addresses under 32-bit operating systems fit perfectly inside 32 bits, this layout
+//! does not make any assumptions about virtual address zero-bits and retains 100% address precision.
+
+use std::marker::PhantomData;
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// A 32-bit platform implementation of `AtomicTaggedPtr` leveraging 64-bit atomics.
+///
+/// Under supported 32-bit architectures, this structure maps atomic operations directly to high-performance
+/// double-word CAS instructions (such as `cmpxchg8b` on x86/i686).
+pub(crate) struct AtomicTaggedPtrImpl<T> {
+    bits: AtomicU64,
+    _marker: PhantomData<*mut T>,
+}
+
+// Safety: AtomicTaggedPtrImpl handles physical atomics and interior synchronization safely.
+unsafe impl<T> Send for AtomicTaggedPtrImpl<T> {}
+unsafe impl<T> Sync for AtomicTaggedPtrImpl<T> {}
+
+impl<T> AtomicTaggedPtrImpl<T> {
+    /// Creates a new `AtomicTaggedPtrImpl` with the given pointer and an initial tag of 0.
+    #[inline]
+    pub(crate) fn new(ptr: Option<NonNull<T>>) -> Self {
+        let ptr_val = ptr.map(|p| p.as_ptr() as u32 as u64).unwrap_or(0);
+        Self {
+            bits: AtomicU64::new(ptr_val),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Packs a pointer and a tag into a single 64-bit `u64` value.
+    #[inline]
+    fn pack(ptr: *const T, tag: usize) -> u64 {
+        let ptr_val = ptr as u32 as u64;
+        let tag_val = tag as u64;
+        (tag_val << 32) | ptr_val
+    }
+
+    /// Unpacks a 64-bit `u64` value into its component pointer and tag.
+    #[inline]
+    fn unpack(bits: u64) -> (Option<NonNull<T>>, usize) {
+        let ptr_val = (bits & 0xFFFFFFFF) as u32;
+        let tag = (bits >> 32) as usize;
+
+        let ptr = if ptr_val == 0 {
+            None
+        } else {
+            // Safety: The pointer address is safely reconstructed from the lower 32 bits
+            unsafe { Some(NonNull::new_unchecked(ptr_val as *mut T)) }
+        };
+
+        (ptr, tag)
+    }
+
+    /// Atomically loads the tagged pointer.
+    ///
+    /// Memory ordering must be one of `Acquire`, `Relaxed`, or `SeqCst`.
+    #[inline]
+    pub(crate) fn load(&self, order: Ordering) -> (Option<NonNull<T>>, usize) {
+        let bits = self.bits.load(order);
+        Self::unpack(bits)
+    }
+
+    /// Atomically stores a new tagged pointer.
+    ///
+    /// Memory ordering must be one of `Release`, `Relaxed`, or `SeqCst`.
+    #[inline]
+    pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: usize, order: Ordering) {
+        let raw_ptr = ptr
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(std::ptr::null());
+        let bits = Self::pack(raw_ptr, tag);
+        self.bits.store(bits, order);
+    }
+
+    /// Atomically exchanges the tagged pointer value if the current value matches expectations.
+    ///
+    /// Returns `Ok` with the new value if successful, or `Err` with the actual loaded value on failure.
+    #[inline]
+    pub(crate) fn compare_exchange(
+        &self,
+        current: (Option<NonNull<T>>, usize),
+        new: (Option<NonNull<T>>, usize),
+        success: Ordering,
+        failure: Ordering,
+    ) -> super::TaggedPtrResult<T> {
+        let cur_raw = current
+            .0
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(std::ptr::null());
+        let new_raw = new
+            .0
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(std::ptr::null());
+
+        let cur_bits = Self::pack(cur_raw, current.1);
+        let new_bits = Self::pack(new_raw, new.1);
+
+        match self
+            .bits
+            .compare_exchange(cur_bits, new_bits, success, failure)
+        {
+            Ok(bits) => Ok(Self::unpack(bits)),
+            Err(bits) => Err(Self::unpack(bits)),
+        }
+    }
+
+    /// Atomically exchanges the tagged pointer value with weak semantics.
+    ///
+    /// Suitable for spin-loops.
+    #[inline]
+    pub(crate) fn compare_exchange_weak(
+        &self,
+        current: (Option<NonNull<T>>, usize),
+        new: (Option<NonNull<T>>, usize),
+        success: Ordering,
+        failure: Ordering,
+    ) -> super::TaggedPtrResult<T> {
+        let cur_raw = current
+            .0
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(std::ptr::null());
+        let new_raw = new
+            .0
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(std::ptr::null());
+
+        let cur_bits = Self::pack(cur_raw, current.1);
+        let new_bits = Self::pack(new_raw, new.1);
+
+        match self
+            .bits
+            .compare_exchange_weak(cur_bits, new_bits, success, failure)
+        {
+            Ok(bits) => Ok(Self::unpack(bits)),
+            Err(bits) => Err(Self::unpack(bits)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pack_unpack_sanity_32bit() {
+        let val = 99;
+        let ptr = NonNull::new(&val as *const i32 as *mut i32);
+
+        let packed = AtomicTaggedPtrImpl::pack(ptr.unwrap().as_ptr(), 0xDEADBEEF);
+        let (unpacked_ptr, tag) = AtomicTaggedPtrImpl::unpack(packed);
+
+        assert_eq!(tag, 0xDEADBEEF);
+        assert_eq!(unpacked_ptr, ptr);
+
+        // Null pointer packing test
+        let packed_null = AtomicTaggedPtrImpl::pack(std::ptr::null::<i32>(), 42);
+        let (unpacked_null, tag_null) = AtomicTaggedPtrImpl::unpack(packed_null);
+        assert_eq!(tag_null, 42);
+        assert!(unpacked_null.is_none());
+    }
+
+    #[test]
+    fn test_cas_loop_simulation_32bit() {
+        let value = 500;
+        let ptr = NonNull::new(&value as *const i32 as *mut i32);
+        let atom = AtomicTaggedPtrImpl::new(ptr);
+
+        let loaded = atom.load(Ordering::Acquire);
+        assert_eq!(loaded.0, ptr);
+        assert_eq!(loaded.1, 0);
+
+        let new_value = 600;
+        let new_ptr = NonNull::new(&new_value as *const i32 as *mut i32);
+
+        let cas_res = atom.compare_exchange(
+            (ptr, 0),
+            (new_ptr, 0xABCDEF01),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+
+        assert!(cas_res.is_ok());
+        let loaded_new = atom.load(Ordering::Acquire);
+        assert_eq!(loaded_new.0, new_ptr);
+        assert_eq!(loaded_new.1, 0xABCDEF01);
+    }
+}
