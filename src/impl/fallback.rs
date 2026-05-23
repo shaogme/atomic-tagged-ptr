@@ -8,10 +8,17 @@
 //! lock-free compare-and-swap behavior inside the critical section, ensuring data safety and ABA protection
 //! under all conditions.
 
-use std::marker::PhantomData;
-use std::ptr::NonNull;
+#[cfg(not(feature = "std"))]
+compile_error!(
+    "The Mutex-based fallback implementation for `atomic-tagged-ptr` requires the `std` feature to be enabled. \
+     Please enable the `std` feature in your Cargo.toml."
+);
+
+use core::marker::PhantomData;
+use core::ptr::NonNull;
+#[cfg(feature = "std")]
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
+use core::sync::atomic::Ordering;
 
 pub const TAG_MASK: usize = usize::MAX;
 

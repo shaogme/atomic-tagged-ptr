@@ -23,9 +23,9 @@
 //!    without native 64-bit atomics, the implementation seamlessly falls back to standard Mutex synchronization.
 //!    This guarantees 100% compilation safety without sacrificing API consistency or memory efficiency.
 
-use std::fmt;
-use std::ptr::NonNull;
-use std::sync::atomic::Ordering;
+use core::fmt;
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 
 // --- Platform Routing Conditional Compile Sections ---
 
@@ -170,7 +170,7 @@ impl<T> fmt::Debug for AtomicTaggedPtr<T> {
 
 // --- Built-in Local Integration Tests ---
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     use std::format;

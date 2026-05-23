@@ -9,4 +9,7 @@ description = "A platform-adaptive atomic tagged pointer implementation supporti
 build = "build.rs"
 
 [features]
+default = ["std"]
+std = []
+
 [dependencies]

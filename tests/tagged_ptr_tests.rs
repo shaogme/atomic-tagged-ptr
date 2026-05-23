@@ -5,11 +5,15 @@
 //! and construct a full lock-free intrusive Treiber Stack to rigorously test
 //! defense against the classic ABA problem.
 
-use std::ptr::NonNull;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
+#![no_std]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 use atomic_tagged_ptr::AtomicTaggedPtr;
+
 
 // --- 1. Simulation of High 57-bit (5-Level Paging) Address Integrity ---
 
@@ -64,124 +68,134 @@ fn test_57bit_virtual_address_integrity() {
 
 // --- 2. Treiber Stack Concurrency and ABA Protection Test ---
 
-/// A node in our intrusive Treiber Stack.
-struct StackNode {
-    value: usize,
-    // Intrusive next pointer slot
-    next: AtomicTaggedPtr<StackNode>,
-}
+#[cfg(feature = "std")]
+mod concurrent_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+    use std::vec::Vec;
 
-/// A fully functional lock-free intrusive Treiber Stack powered by `AtomicTaggedPtr`.
-struct TreiberStack {
-    // Head pointer along with generation tag for ABA defense
-    head: AtomicTaggedPtr<StackNode>,
-}
-
-impl TreiberStack {
-    fn new() -> Self {
-        Self {
-            head: AtomicTaggedPtr::new(None),
-        }
+    /// A node in our intrusive Treiber Stack.
+    struct StackNode {
+        value: usize,
+        // Intrusive next pointer slot
+        next: AtomicTaggedPtr<StackNode>,
     }
 
-    fn push(&self, node: &StackNode) {
-        let node_ptr = NonNull::from(node);
-        let mut bits = self.head.load(Ordering::Acquire);
-        loop {
-            // Intrusively link our node to the current head pointer
-            node.next.store(bits.0, bits.1, Ordering::Release);
-
-            // Advance the generation tag to defend against ABA
-            let next_tag = bits.1.wrapping_add(1);
-
-            match self.head.compare_exchange_weak(
-                bits,
-                (Some(node_ptr), next_tag),
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break,
-                Err(actual) => bits = actual,
-            }
-        }
+    /// A fully functional lock-free intrusive Treiber Stack powered by `AtomicTaggedPtr`.
+    struct TreiberStack {
+        // Head pointer along with generation tag for ABA defense
+        head: AtomicTaggedPtr<StackNode>,
     }
 
-    fn pop(&self) -> Option<&StackNode> {
-        let mut bits = self.head.load(Ordering::Acquire);
-        loop {
-            let head_ptr = bits.0?;
-
-            // Read the next node intrusively.
-            // Safety: Under garbage collection or static node allocation, this node memory remains valid.
-            let next_state = unsafe { head_ptr.as_ref().next.load(Ordering::Acquire) };
-
-            // Advance generation tag to defend against ABA
-            let next_tag = bits.1.wrapping_add(1);
-
-            match self.head.compare_exchange_weak(
-                bits,
-                (next_state.0, next_tag),
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
-                // Safety: We reconstruct the reference safely
-                Ok(_) => return Some(unsafe { head_ptr.as_ref() }),
-                Err(actual) => bits = actual,
+    impl TreiberStack {
+        fn new() -> Self {
+            Self {
+                head: AtomicTaggedPtr::new(None),
             }
         }
-    }
-}
 
-#[test]
-fn test_treiber_stack_concurrent_aba_defense() {
-    let num_threads = 8;
-    let num_ops = 5000;
+        fn push(&self, node: &StackNode) {
+            let node_ptr = NonNull::from(node);
+            let mut bits = self.head.load(Ordering::Acquire);
+            loop {
+                // Intrusively link our node to the current head pointer
+                node.next.store(bits.0, bits.1, Ordering::Release);
 
-    let stack = Arc::new(TreiberStack::new());
-    let mut handles = Vec::new();
+                // Advance the generation tag to defend against ABA
+                let next_tag = bits.1.wrapping_add(1);
 
-    // Statically allocated nodes to ensure safe memory access across threads without GC overhead
-    let nodes: Vec<StackNode> = (0..num_threads * num_ops)
-        .map(|i| StackNode {
-            value: i,
-            next: AtomicTaggedPtr::new(None),
-        })
-        .collect();
-
-    let nodes_ref = Arc::new(nodes);
-    let success_count = Arc::new(AtomicUsize::new(0));
-
-    for thread_idx in 0..num_threads {
-        let stack_clone = Arc::clone(&stack);
-        let nodes_clone = Arc::clone(&nodes_ref);
-        let success_clone = Arc::clone(&success_count);
-
-        let handle = thread::spawn(move || {
-            let start_idx = thread_idx * num_ops;
-
-            // Dense push ops
-            for op in 0..num_ops {
-                let node_ref = &nodes_clone[start_idx + op];
-                stack_clone.push(node_ref);
-            }
-
-            // Dense pop ops
-            for _ in 0..num_ops {
-                if let Some(node) = stack_clone.pop() {
-                    success_clone.fetch_add(1, Ordering::Relaxed);
-                    // Ensure the popped node contains valid thread ranges
-                    assert!(node.value < num_threads * num_ops);
+                match self.head.compare_exchange_weak(
+                    bits,
+                    (Some(node_ptr), next_tag),
+                    Ordering::Release,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => bits = actual,
                 }
             }
-        });
-        handles.push(handle);
+        }
+
+        fn pop(&self) -> Option<&StackNode> {
+            let mut bits = self.head.load(Ordering::Acquire);
+            loop {
+                let head_ptr = bits.0?;
+
+                // Read the next node intrusively.
+                // Safety: Under garbage collection or static node allocation, this node memory remains valid.
+                let next_state = unsafe { head_ptr.as_ref().next.load(Ordering::Acquire) };
+
+                // Advance generation tag to defend against ABA
+                let next_tag = bits.1.wrapping_add(1);
+
+                match self.head.compare_exchange_weak(
+                    bits,
+                    (next_state.0, next_tag),
+                    Ordering::Release,
+                    Ordering::Acquire,
+                ) {
+                    // Safety: We reconstruct the reference safely
+                    Ok(_) => return Some(unsafe { head_ptr.as_ref() }),
+                    Err(actual) => bits = actual,
+                }
+            }
+        }
     }
 
-    for h in handles {
-        h.join().unwrap();
-    }
+    #[test]
+    fn test_treiber_stack_concurrent_aba_defense() {
+        let num_threads = 8;
+        let num_ops = 5000;
 
-    // Verify all nodes pushed were successfully popped without any ABA corruption
-    assert_eq!(success_count.load(Ordering::SeqCst), num_threads * num_ops);
-    assert!(stack.pop().is_none());
+        let stack = Arc::new(TreiberStack::new());
+        let mut handles = Vec::new();
+
+        // Statically allocated nodes to ensure safe memory access across threads without GC overhead
+        let nodes: Vec<StackNode> = (0..num_threads * num_ops)
+            .map(|i| StackNode {
+                value: i,
+                next: AtomicTaggedPtr::new(None),
+            })
+            .collect();
+
+        let nodes_ref = Arc::new(nodes);
+        let success_count = Arc::new(AtomicUsize::new(0));
+
+        for thread_idx in 0..num_threads {
+            let stack_clone = Arc::clone(&stack);
+            let nodes_clone = Arc::clone(&nodes_ref);
+            let success_clone = Arc::clone(&success_count);
+
+            let handle = thread::spawn(move || {
+                let start_idx = thread_idx * num_ops;
+
+                // Dense push ops
+                for op in 0..num_ops {
+                    let node_ref = &nodes_clone[start_idx + op];
+                    stack_clone.push(node_ref);
+                }
+
+                // Dense pop ops
+                for _ in 0..num_ops {
+                    if let Some(node) = stack_clone.pop() {
+                        success_clone.fetch_add(1, Ordering::Relaxed);
+                        // Ensure the popped node contains valid thread ranges
+                        assert!(node.value < num_threads * num_ops);
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Verify all nodes pushed were successfully popped without any ABA corruption
+        assert_eq!(success_count.load(Ordering::SeqCst), num_threads * num_ops);
+        assert!(stack.pop().is_none());
+    }
 }
+

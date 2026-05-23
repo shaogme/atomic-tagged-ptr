@@ -7,7 +7,7 @@
 
 #![no_std]
 
-// Standard library is required for Mutex downgrade fallback or testing
+#[cfg(feature = "std")]
 extern crate std;
 
 pub use r#impl::AtomicTaggedPtr;

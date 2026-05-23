@@ -10,9 +10,9 @@
 //! Since pointer addresses under 32-bit operating systems fit perfectly inside 32 bits, this layout
 //! does not make any assumptions about virtual address zero-bits and retains 100% address precision.
 
-use std::marker::PhantomData;
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU64, Ordering};
+use core::marker::PhantomData;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const TAG_MASK: usize = 0xFFFF_FFFF;
 
@@ -80,7 +80,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: usize, order: Ordering) {
         let raw_ptr = ptr
             .map(|p| p.as_ptr() as *const T)
-            .unwrap_or(std::ptr::null());
+            .unwrap_or(core::ptr::null());
         let bits = Self::pack(raw_ptr, tag);
         self.bits.store(bits, order);
     }
@@ -99,11 +99,11 @@ impl<T> AtomicTaggedPtrImpl<T> {
         let cur_raw = current
             .0
             .map(|p| p.as_ptr() as *const T)
-            .unwrap_or(std::ptr::null());
+            .unwrap_or(core::ptr::null());
         let new_raw = new
             .0
             .map(|p| p.as_ptr() as *const T)
-            .unwrap_or(std::ptr::null());
+            .unwrap_or(core::ptr::null());
 
         let cur_bits = Self::pack(cur_raw, current.1);
         let new_bits = Self::pack(new_raw, new.1);
@@ -131,11 +131,11 @@ impl<T> AtomicTaggedPtrImpl<T> {
         let cur_raw = current
             .0
             .map(|p| p.as_ptr() as *const T)
-            .unwrap_or(std::ptr::null());
+            .unwrap_or(core::ptr::null());
         let new_raw = new
             .0
             .map(|p| p.as_ptr() as *const T)
-            .unwrap_or(std::ptr::null());
+            .unwrap_or(core::ptr::null());
 
         let cur_bits = Self::pack(cur_raw, current.1);
         let new_bits = Self::pack(new_raw, new.1);
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(unpacked_ptr, ptr);
 
         // Null pointer packing test
-        let packed_null = AtomicTaggedPtrImpl::pack(std::ptr::null::<i32>(), 42);
+        let packed_null = AtomicTaggedPtrImpl::pack(core::ptr::null::<i32>(), 42);
         let (unpacked_null, tag_null) = AtomicTaggedPtrImpl::unpack(packed_null);
         assert_eq!(tag_null, 42);
         assert!(unpacked_null.is_none());
