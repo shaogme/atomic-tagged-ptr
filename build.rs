@@ -3,6 +3,7 @@ use std::env;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR");
+    println!("cargo:rerun-if-env-changed=ATOMIC_TAGGED_PTR_PRINT_AUTODETECT");
     println!("cargo:rustc-check-cfg=cfg(virt_addr_48)");
     println!("cargo:rustc-check-cfg=cfg(atomic_fallback)");
 
@@ -25,6 +26,10 @@ fn main() {
 
     // 2. Automatically detect virtual address space size for 64-bit platforms
     if target_pointer_width == "64" {
+        let print_autodetect = env::var("ATOMIC_TAGGED_PTR_PRINT_AUTODETECT")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         // Support overriding via environment variable
         if let Ok(force_val) = env::var("ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR") {
             if force_val == "48" {
@@ -42,7 +47,9 @@ fn main() {
         // Automatically enable optimized layout for OSes known to have <= 48-bit virtual address spaces
         if target_os == "macos" || target_os == "ios" {
             println!("cargo:rustc-cfg=virt_addr_48");
-            println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Apple platform detected, enabling 48-bit virtual address layout (16-bit tag).");
+            if print_autodetect {
+                println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Apple platform detected, enabling 48-bit virtual address layout (16-bit tag).");
+            }
             return;
         }
 
@@ -54,7 +61,9 @@ fn main() {
                     if !cpuinfo.contains("la57") {
                         // If la57 is absent, the CPU does not support 5-level paging, so virtual address space is <= 48-bit
                         println!("cargo:rustc-cfg=virt_addr_48");
-                        println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Linux CPU does not support la57 (5-level paging), enabling 48-bit virtual address layout (16-bit tag).");
+                        if print_autodetect {
+                            println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Linux CPU does not support la57 (5-level paging), enabling 48-bit virtual address layout (16-bit tag).");
+                        }
                         return;
                     }
                 }
@@ -71,14 +80,18 @@ fn main() {
                 if !host_supports_la57() {
                     // If the CPU hardware does not support 5-level paging, the address space is 100% guaranteed to be <= 48-bit
                     println!("cargo:rustc-cfg=virt_addr_48");
-                    println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Windows CPU does not support la57 (5-level paging), enabling 48-bit virtual address layout (16-bit tag).");
+                    if print_autodetect {
+                        println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Windows CPU does not support la57 (5-level paging), enabling 48-bit virtual address layout (16-bit tag).");
+                    }
                     return;
                 }
             }
         }
 
         // Default to conservative 57-bit virtual address layout (8-bit tag) for safety if unable to determine
-        println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Unable to determine virtual address space limits, defaulting to conservative 57-bit layout (8-bit tag).");
+        if print_autodetect {
+            println!("cargo:warning=[atomic-tagged-ptr] Auto-detection: Unable to determine virtual address space limits, defaulting to conservative 57-bit layout (8-bit tag).");
+        }
     }
 }
 
