@@ -34,11 +34,29 @@ use crate::traits::IntoOptionNonNull;
 #[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
 mod ptr64;
 
+#[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
+use ptr64::AtomicTaggedPtrImpl;
+
+#[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
+pub use ptr64::TAG_MASK;
+
 #[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
 mod ptr32;
 
+#[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
+use ptr32::AtomicTaggedPtrImpl;
+
+#[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
+pub use ptr32::TAG_MASK;
+
 #[cfg(atomic_fallback)]
 mod fallback;
+
+#[cfg(atomic_fallback)]
+pub use fallback::TAG_MASK;
+
+#[cfg(atomic_fallback)]
+use fallback::AtomicTaggedPtrImpl;
 
 /// Represents a generation tag used for ABA protection in `AtomicTaggedPtr`.
 ///
@@ -46,17 +64,6 @@ mod fallback;
 /// (like wrapping addition or creation) respect the hardware platform's limits and bit-width.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tag(pub(crate) usize);
-
-// --- Exposing Unified High-Level Struct ---
-
-#[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
-pub use ptr64::TAG_MASK;
-
-#[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
-pub use ptr32::TAG_MASK;
-
-#[cfg(atomic_fallback)]
-pub use fallback::TAG_MASK;
 
 impl Tag {
     /// Creates a new `Tag` from a raw value, applying the platform-specific mask.
@@ -119,14 +126,7 @@ pub(crate) type RawTaggedPtrResult<T> =
 
 /// A platform-adaptive atomic tagged pointer supporting thread-safe ABA protection.
 pub struct AtomicTaggedPtr<T> {
-    #[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
-    inner: ptr64::AtomicTaggedPtrImpl<T>,
-
-    #[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
-    inner: ptr32::AtomicTaggedPtrImpl<T>,
-
-    #[cfg(atomic_fallback)]
-    inner: fallback::AtomicTaggedPtrImpl<T>,
+    inner: AtomicTaggedPtrImpl<T>,
 }
 
 // Safety: AtomicTaggedPtr is an atomic synchronizer wrapping pointer locations, safe to send/share across threads.
@@ -156,14 +156,7 @@ impl<T> AtomicTaggedPtr<T> {
     {
         let raw_ptr = ptr.into_option_non_null();
         Self {
-            #[cfg(all(target_pointer_width = "64", not(atomic_fallback)))]
-            inner: ptr64::AtomicTaggedPtrImpl::new(raw_ptr),
-
-            #[cfg(all(target_pointer_width = "32", not(atomic_fallback)))]
-            inner: ptr32::AtomicTaggedPtrImpl::new(raw_ptr),
-
-            #[cfg(atomic_fallback)]
-            inner: fallback::AtomicTaggedPtrImpl::new(raw_ptr),
+            inner: AtomicTaggedPtrImpl::new(raw_ptr),
         }
     }
 
