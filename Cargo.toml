@@ -11,5 +11,7 @@ build = "build.rs"
 [features]
 default = ["std"]
 std = []
+parking_lot = ["std", "dep:parking_lot"]
 
 [dependencies]
+parking_lot = { version = "0.12.5", optional = true }

@@ -32,7 +32,7 @@ Specially tailored for lock-free intrusive data structures (such as Treiber Stac
 - **Platform-Adaptive Memory Layout**: Dynamically adjusts layout to fit 48-bit, 52-bit, and 57-bit virtual address limits at build time, optimizing tag bits while preventing pointer corruption.
 - **Zero Overhead**: Direct hardware mapping to atomic operations (`cmpxchg` on x86_64, `ldrex/strex` or `cas` on AArch64, `cmpxchg8b` on x86-32, `ldrd/strd` on ARMv7-A) without locking.
 - **Preserves Strict Provenance**: Utilizes modern `core::ptr::with_exposed_provenance_mut` to avoid unsafe pointer hacks, aligning with the latest Rust strict provenance guidelines.
-- **Robust Fallback**: Automatically falls back to standard Mutex-based synchronization on platforms lacking native 64-bit atomics (requires the `std` feature), ensuring 100% compilation and API consistency.
+- **Robust Fallback**: Automatically falls back to standard Mutex-based synchronization on platforms lacking native 64-bit atomics (requires the `std` feature), ensuring 100% compilation and API consistency. If the `parking_lot` feature is enabled, a faster `parking_lot::Mutex` is utilized instead of `std::sync::Mutex`.
 - **`#![no_std]` Support**: Core functions work in `no_std` environments by default (Mutex fallback requires `std`).
 - **Comprehensive CI Verification**: Verified via real QEMU virtual machine emulation on GitHub Actions to test and assert correctness under actual 57-bit virtual address spaces (Intel 5-level paging).
 
@@ -75,7 +75,7 @@ On 32-bit systems, the pointer fits entirely in 32 bits. We pair it with a **32-
 ```
 
 ### 4. Fallback Systems
-On platforms where native 64-bit atomics are unavailable (or forced fallback is requested), `atomic-tagged-ptr` automatically switches to Mutex-based wrapping. The tag and pointer occupy full `usize` widths (providing maximum generation range) while offering identical API signatures.
+On platforms where native 64-bit atomics are unavailable (or forced fallback is requested), `atomic-tagged-ptr` automatically switches to Mutex-based wrapping. The tag and pointer occupy full `usize` widths (providing maximum generation range) while offering identical API signatures. By default, it uses `std::sync::Mutex` (which requires the `std` feature). When the `parking_lot` feature is enabled, it uses `parking_lot::Mutex` as the synchronization backend.
 
 ---
 

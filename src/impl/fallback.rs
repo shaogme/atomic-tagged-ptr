@@ -18,8 +18,49 @@ use super::Tag;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-#[cfg(feature = "std")]
-use std::sync::Mutex;
+#[cfg(feature = "parking_lot")]
+use parking_lot::{Mutex as InnerMutex, MutexGuard as InnerMutexGuard};
+
+#[cfg(not(feature = "parking_lot"))]
+use std::sync::{Mutex as InnerMutex, MutexGuard as InnerMutexGuard};
+
+pub(crate) struct Mutex<T>(InnerMutex<T>);
+
+impl<T> Mutex<T> {
+    #[inline]
+    pub const fn new(val: T) -> Self {
+        Self(InnerMutex::new(val))
+    }
+
+    #[inline]
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        #[cfg(feature = "parking_lot")]
+        {
+            MutexGuard(self.0.lock())
+        }
+        #[cfg(not(feature = "parking_lot"))]
+        {
+            MutexGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        }
+    }
+}
+
+pub(crate) struct MutexGuard<'a, T>(InnerMutexGuard<'a, T>);
+
+impl<T> core::ops::Deref for MutexGuard<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 pub const TAG_MASK: usize = usize::MAX;
 
@@ -48,7 +89,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
     /// Respects the `Ordering` argument by invoking a memory fence.
     #[inline]
     pub(crate) fn load(&self, order: Ordering) -> (Option<NonNull<T>>, Tag) {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         let val = *guard;
         if order != Ordering::Relaxed {
             core::sync::atomic::fence(order);
@@ -62,7 +103,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         if order != Ordering::Relaxed {
             core::sync::atomic::fence(order);
         }
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         *guard = (ptr, tag);
     }
 
@@ -77,7 +118,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         success: Ordering,
         failure: Ordering,
     ) -> super::RawTaggedPtrResult<T> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         let actual = *guard;
 
         if actual.0 == current.0 && actual.1 == current.1 {
