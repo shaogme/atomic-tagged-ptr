@@ -120,7 +120,7 @@ Below is a complete, concurrent lock-free Treiber Stack implementation using `At
 ```rust
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-use atomic_tagged_ptr::{AtomicTaggedPtr, TaggedPtr, Tag};
+use atomic_tagged_ptr::{AtomicTaggedPtr, Tag};
 
 /// A node in the intrusive Treiber Stack.
 pub struct StackNode {
@@ -138,7 +138,7 @@ pub struct TreiberStack {
 impl TreiberStack {
     pub fn new() -> Self {
         Self {
-            head: AtomicTaggedPtr::new(TaggedPtr::default()),
+            head: AtomicTaggedPtr::default(),
         }
     }
 
@@ -155,7 +155,7 @@ impl TreiberStack {
 
             match self.head.compare_exchange_weak(
                 bits,
-                TaggedPtr::new(Some(node_ptr), next_tag),
+                (node_ptr, next_tag),
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
@@ -182,7 +182,7 @@ impl TreiberStack {
 
             match self.head.compare_exchange_weak(
                 bits,
-                TaggedPtr::new(next_state.ptr, next_tag),
+                (next_state.ptr, next_tag),
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
