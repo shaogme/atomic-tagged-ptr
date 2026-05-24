@@ -6,6 +6,7 @@
 //! virtual address (such as Intel 5-level paging) without truncation or pointer corruption.
 
 #![no_std]
+#![doc = include_str!("../README.md")]
 
 #[cfg(feature = "std")]
 extern crate std;
