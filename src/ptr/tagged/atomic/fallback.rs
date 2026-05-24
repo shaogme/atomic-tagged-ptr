@@ -8,21 +8,90 @@
 //! lock-free compare-and-swap behavior inside the critical section, ensuring data safety and ABA protection
 //! under all conditions.
 
-#[cfg(not(feature = "std"))]
-compile_error!(
-    "The Mutex-based fallback implementation for `atomic-tagged-ptr` requires the `std` feature to be enabled. \
-     Please enable the `std` feature in your Cargo.toml."
-);
-
 use super::Tag;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+
 #[cfg(feature = "parking_lot")]
 use parking_lot::{Mutex as InnerMutex, MutexGuard as InnerMutexGuard};
 
-#[cfg(not(feature = "parking_lot"))]
+#[cfg(all(feature = "std", not(feature = "parking_lot")))]
 use std::sync::{Mutex as InnerMutex, MutexGuard as InnerMutexGuard};
+
+#[cfg(not(feature = "std"))]
+use self::spin::{SpinLock as InnerMutex, SpinLockGuard as InnerMutexGuard};
+
+#[cfg(not(feature = "std"))]
+mod spin {
+    use core::cell::UnsafeCell;
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    pub(crate) struct SpinLock<T> {
+        lock: AtomicBool,
+        data: UnsafeCell<T>,
+    }
+
+    unsafe impl<T: Send> Send for SpinLock<T> {}
+    unsafe impl<T: Send> Sync for SpinLock<T> {}
+
+    impl<T> SpinLock<T> {
+        #[inline]
+        pub const fn new(val: T) -> Self {
+            Self {
+                lock: AtomicBool::new(false),
+                data: UnsafeCell::new(val),
+            }
+        }
+
+        #[inline]
+        pub fn lock(&self) -> SpinLockGuard<'_, T> {
+            while self
+                .lock
+                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            SpinLockGuard {
+                lock: &self.lock,
+                data: unsafe { &mut *self.data.get() },
+            }
+        }
+
+        #[inline]
+        pub fn into_inner(self) -> T {
+            self.data.into_inner()
+        }
+    }
+
+    pub(crate) struct SpinLockGuard<'a, T> {
+        lock: &'a AtomicBool,
+        data: &'a mut T,
+    }
+
+    impl<T> core::ops::Deref for SpinLockGuard<'_, T> {
+        type Target = T;
+        #[inline]
+        fn deref(&self) -> &Self::Target {
+            self.data
+        }
+    }
+
+    impl<T> core::ops::DerefMut for SpinLockGuard<'_, T> {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.data
+        }
+    }
+
+    impl<T> Drop for SpinLockGuard<'_, T> {
+        #[inline]
+        fn drop(&mut self) {
+            self.lock.store(false, Ordering::Release);
+        }
+    }
+}
 
 pub(crate) struct Mutex<T>(InnerMutex<T>);
 
@@ -38,9 +107,13 @@ impl<T> Mutex<T> {
         {
             MutexGuard(self.0.lock())
         }
-        #[cfg(not(feature = "parking_lot"))]
+        #[cfg(all(feature = "std", not(feature = "parking_lot")))]
         {
             MutexGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            MutexGuard(self.0.lock())
         }
     }
 
@@ -50,9 +123,13 @@ impl<T> Mutex<T> {
         {
             self.0.into_inner()
         }
-        #[cfg(not(feature = "parking_lot"))]
+        #[cfg(all(feature = "std", not(feature = "parking_lot")))]
         {
             self.0.into_inner().unwrap_or_else(|e| e.into_inner())
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.0.into_inner()
         }
     }
 }

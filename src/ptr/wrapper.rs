@@ -773,7 +773,9 @@ impl<T> Ptr<T> {
     #[inline]
     pub unsafe fn offset(self, count: isize) -> Self {
         Self {
-            inner: self.inner.map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().offset(count)) }),
+            inner: self
+                .inner
+                .map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().offset(count)) }),
         }
     }
 
@@ -801,7 +803,9 @@ impl<T> Ptr<T> {
     #[inline]
     pub unsafe fn add(self, count: usize) -> Self {
         Self {
-            inner: self.inner.map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().add(count)) }),
+            inner: self
+                .inner
+                .map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().add(count)) }),
         }
     }
 
@@ -829,7 +833,9 @@ impl<T> Ptr<T> {
     #[inline]
     pub unsafe fn sub(self, count: usize) -> Self {
         Self {
-            inner: self.inner.map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().sub(count)) }),
+            inner: self
+                .inner
+                .map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().sub(count)) }),
         }
     }
 
@@ -851,7 +857,9 @@ impl<T> Ptr<T> {
     #[inline]
     pub fn wrapping_offset(self, count: isize) -> Self {
         Self {
-            inner: self.inner.map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().wrapping_offset(count)) }),
+            inner: self
+                .inner
+                .map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().wrapping_offset(count)) }),
         }
     }
 
@@ -873,7 +881,9 @@ impl<T> Ptr<T> {
     #[inline]
     pub fn wrapping_add(self, count: usize) -> Self {
         Self {
-            inner: self.inner.map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().wrapping_add(count)) }),
+            inner: self
+                .inner
+                .map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().wrapping_add(count)) }),
         }
     }
 
@@ -895,7 +905,9 @@ impl<T> Ptr<T> {
     #[inline]
     pub fn wrapping_sub(self, count: usize) -> Self {
         Self {
-            inner: self.inner.map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().wrapping_sub(count)) }),
+            inner: self
+                .inner
+                .map(|p| unsafe { NonNull::new_unchecked(p.as_ptr().wrapping_sub(count)) }),
         }
     }
 }

@@ -26,7 +26,10 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{Tag, ptr::{Ptr, TaggedPtr}};
+use crate::{
+    Tag,
+    ptr::{Ptr, TaggedPtr},
+};
 
 // --- Platform Routing Conditional Compile Sections ---
 
@@ -56,7 +59,6 @@ pub use fallback::TAG_MASK;
 
 #[cfg(atomic_fallback)]
 use fallback::AtomicTaggedPtrImpl;
-
 
 /// Type alias representing the result of atomic compare and exchange operations.
 pub type TaggedPtrResult<T> = Result<TaggedPtr<T>, TaggedPtr<T>>;
@@ -393,7 +395,8 @@ impl<T> AtomicTaggedPtr<T> {
         let (success, failure) = split_ordering(order);
         self.fetch_update(success, failure, |prev| {
             Some(prev.with_tag(prev.tag.wrapping_add(val)))
-        }).unwrap()
+        })
+        .unwrap()
     }
 
     /// Atomically subtracts `val` from the tag of the current tagged pointer, returning the previous tagged pointer.
@@ -416,7 +419,8 @@ impl<T> AtomicTaggedPtr<T> {
         let (success, failure) = split_ordering(order);
         self.fetch_update(success, failure, |prev| {
             Some(prev.with_tag(prev.tag.wrapping_sub(val)))
-        }).unwrap()
+        })
+        .unwrap()
     }
 
     /// Atomically performs a bitwise AND on the tag of the current tagged pointer, returning the previous tagged pointer.
@@ -437,9 +441,8 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn fetch_and_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T> {
         let (success, failure) = split_ordering(order);
-        self.fetch_update(success, failure, |prev| {
-            Some(prev.with_tag(prev.tag & val))
-        }).unwrap()
+        self.fetch_update(success, failure, |prev| Some(prev.with_tag(prev.tag & val)))
+            .unwrap()
     }
 
     /// Atomically performs a bitwise OR on the tag of the current tagged pointer, returning the previous tagged pointer.
@@ -460,9 +463,8 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn fetch_or_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T> {
         let (success, failure) = split_ordering(order);
-        self.fetch_update(success, failure, |prev| {
-            Some(prev.with_tag(prev.tag | val))
-        }).unwrap()
+        self.fetch_update(success, failure, |prev| Some(prev.with_tag(prev.tag | val)))
+            .unwrap()
     }
 
     /// Atomically performs a bitwise XOR on the tag of the current tagged pointer, returning the previous tagged pointer.
@@ -483,9 +485,8 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn fetch_xor_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T> {
         let (success, failure) = split_ordering(order);
-        self.fetch_update(success, failure, |prev| {
-            Some(prev.with_tag(prev.tag ^ val))
-        }).unwrap()
+        self.fetch_update(success, failure, |prev| Some(prev.with_tag(prev.tag ^ val)))
+            .unwrap()
     }
 
     /// Atomically updates the pointer part of the current tagged pointer, returning the previous tagged pointer.
@@ -515,9 +516,8 @@ impl<T> AtomicTaggedPtr<T> {
     pub fn fetch_set_ptr(&self, ptr: impl Into<Ptr<T>>, order: Ordering) -> TaggedPtr<T> {
         let (success, failure) = split_ordering(order);
         let ptr = ptr.into();
-        self.fetch_update(success, failure, |prev| {
-            Some(prev.with_ptr(ptr))
-        }).unwrap()
+        self.fetch_update(success, failure, |prev| Some(prev.with_ptr(ptr)))
+            .unwrap()
     }
 
     /// Atomically updates the tag part of the current tagged pointer, returning the previous tagged pointer.
@@ -538,9 +538,8 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn fetch_set_tag(&self, tag: Tag, order: Ordering) -> TaggedPtr<T> {
         let (success, failure) = split_ordering(order);
-        self.fetch_update(success, failure, |prev| {
-            Some(prev.with_tag(tag))
-        }).unwrap()
+        self.fetch_update(success, failure, |prev| Some(prev.with_tag(tag)))
+            .unwrap()
     }
 }
 

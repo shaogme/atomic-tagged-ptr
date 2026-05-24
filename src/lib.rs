@@ -12,10 +12,10 @@
 extern crate std;
 
 pub use ptr::AtomicTaggedPtr;
-pub use ptr::TAG_MASK;
-pub use tag::Tag;
 pub use ptr::Ptr;
+pub use ptr::TAG_MASK;
 pub use ptr::TaggedPtr;
+pub use tag::Tag;
 
 mod ptr;
 mod tag;

@@ -160,3 +160,6 @@ jobs:
 
       - name: Test Forced 57-bit Virtual Address Layout without std
         run: ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR=57 ATOMIC_TAGGED_PTR_TEST_EXPECT_57=1 cargo test --no-default-features
+
+      - name: Test Fallback Mutex Implementation without std
+        run: RUSTFLAGS='--cfg atomic_fallback' cargo test --no-default-features

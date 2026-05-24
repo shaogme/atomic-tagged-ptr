@@ -32,8 +32,8 @@ Specially tailored for lock-free intrusive data structures (such as Treiber Stac
 - **Platform-Adaptive Memory Layout**: Dynamically adjusts layout to fit 48-bit, 52-bit, and 57-bit virtual address limits at build time, optimizing tag bits while preventing pointer corruption.
 - **Zero Overhead**: Direct hardware mapping to atomic operations (`cmpxchg` on x86_64, `ldrex/strex` or `cas` on AArch64, `cmpxchg8b` on x86-32, `ldrd/strd` on ARMv7-A) without locking.
 - **Preserves Strict Provenance**: Utilizes modern `core::ptr::with_exposed_provenance_mut` to avoid unsafe pointer hacks, aligning with the latest Rust strict provenance guidelines.
-- **Robust Fallback**: Automatically falls back to standard Mutex-based synchronization on platforms lacking native 64-bit atomics (requires the `std` feature), ensuring 100% compilation and API consistency. If the `parking_lot` feature is enabled, a faster `parking_lot::Mutex` is utilized instead of `std::sync::Mutex`.
-- **`#![no_std]` Support**: Core functions work in `no_std` environments by default (Mutex fallback requires `std`).
+- **Robust Fallback**: Automatically falls back to Mutex/spinlock-based synchronization on platforms lacking native 64-bit atomics, ensuring 100% compilation and API consistency. If `std` is enabled, it uses `std::sync::Mutex` (or a faster `parking_lot::Mutex` if the `parking_lot` feature is enabled). If `std` is disabled, it uses a lightweight, dependency-free spinlock.
+- **`#![no_std]` Support**: Core functions work in `no_std` environments by default. When native 64-bit atomics are unavailable, it seamlessly falls back to a custom spinlock-based implementation without requiring the `std` feature.
 - **Comprehensive CI Verification**: Verified via real QEMU virtual machine emulation on GitHub Actions to test and assert correctness under actual 57-bit virtual address spaces (Intel 5-level paging).
 
 ---
@@ -75,7 +75,7 @@ On 32-bit systems, the pointer fits entirely in 32 bits. We pair it with a **32-
 ```
 
 ### 4. Fallback Systems
-On platforms where native 64-bit atomics are unavailable (or forced fallback is requested), `atomic-tagged-ptr` automatically switches to Mutex-based wrapping. The tag and pointer occupy full `usize` widths (providing maximum generation range) while offering identical API signatures. By default, it uses `std::sync::Mutex` (which requires the `std` feature). When the `parking_lot` feature is enabled, it uses `parking_lot::Mutex` as the synchronization backend.
+On platforms where native 64-bit atomics are unavailable (or forced fallback is requested), `atomic-tagged-ptr` automatically switches to Mutex/spinlock-based wrapping. The tag and pointer occupy full `usize` widths (providing maximum generation range) while offering identical API signatures. When the `std` feature is enabled, it uses `std::sync::Mutex` (or `parking_lot::Mutex` if the `parking_lot` feature is enabled). When the `std` feature is disabled (i.e. `no_std`), it uses a custom lightweight spinlock backend, requiring zero external dependencies.
 
 ---
 
@@ -99,14 +99,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.3.1"
+atomic-tagged-ptr = "0.3.2"
 ```
 
 To use in `no_std` environments, disable the default features:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.3.1", default-features = false }
+atomic-tagged-ptr = { version = "0.3.2", default-features = false }
 ```
 
 ---

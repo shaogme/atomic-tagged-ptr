@@ -32,8 +32,8 @@
 - **平台自适应内存布局**：在编译/运行时动态调整内存布局，完美适配 48 位、52 位和 57 位虚拟地址空间限制，在防止指针损坏的同时最大化标记（Tag）可用位数。
 - **零额外开销**：直接映射到硬件级原子操作指令（x86_64 上的 `cmpxchg`，AArch64 上的 `ldrex/strex` 或 `cas`，x86-32 上的 `cmpxchg8b`，ARMv7-A 上的 `ldrd/strd`），无锁且高效。
 - **遵循严格指针来源规范**：采用现代 Rust 标准库的 `core::ptr::with_exposed_provenance_mut` API，规避不安全的裸指针强转，完全符合 Rust 官方最新的指针来源（Strict Provenance）安全规范。
-- **健壮的后备方案**：在缺少原生 64 位原子操作的平台上，自动且无缝地切换到基于 Mutex 的同步方案（需要启用 `std` 特性），保证 100% 的编译通过率与一致的 API 行为。若启用了 `parking_lot` 特性，将使用性能更好的 `parking_lot::Mutex` 代替 `std::sync::Mutex`。
-- **支持 `#![no_std]`**：核心功能默认支持 `no_std` 环境（只有在不支持 64 位原子操作的平台上使用 Mutex 后备方案时才需要启用 `std`）。
+- **健壮的后备方案**：在缺少原生 64 位原子操作的平台上，自动且无缝地切换到基于 Mutex 或自旋锁的同步方案，保证 100% 的编译通过率与一致的 API 行为。在开启 `std` 时，使用 `std::sync::Mutex`（若启用 `parking_lot` 特性则使用更高效的 `parking_lot::Mutex`）；在未开启 `std` 时，使用轻量级且无任何第三方依赖的自旋锁。
+- **支持 `#![no_std]`**：核心功能默认支持 `no_std` 环境。即使是在不支持 64 位原子操作的平台上，也会无缝回退到基于自旋锁的实现，无需启用 `std` 特性。
 - **完善的 CI 实机验证**：在 GitHub Actions 中启动真实的 QEMU 虚拟机，在真实的 57 位虚拟地址空间（Intel 5 级分页）内核下运行并通过全部测试用例。
 
 ---
@@ -75,7 +75,7 @@
 ```
 
 ### 4. 健壮后备（Fallback）系统
-在一些不支持原生 64 位原子操作的嵌入式芯片或超轻量微控制器上，`atomic-tagged-ptr` 会自动启用 Mutex 同步后端。此时标记和指针将分别占用完整的 `usize` 位宽（提供最大世代标记范围），并提供 100% 一致的 API。默认情况下使用 `std::sync::Mutex`（需要启用 `std` 特性），如果开启了 `parking_lot` 特性，则会使用 `parking_lot::Mutex` 作为同步后端。
+在一些不支持原生 64 位原子操作的嵌入式芯片或超轻量微控制器上，`atomic-tagged-ptr` 会自动启用 Mutex/自旋锁同步后端。此时标记和指针将分别占用完整的 `usize` 位宽（提供最大世代标记范围），并提供 100% 一致的 API。如果启用了 `std` 特性，默认情况下使用 `std::sync::Mutex`（如果开启了 `parking_lot` 特性，则会使用 `parking_lot::Mutex`）；如果未启用 `std` 特性（即 `no_std` 模式），则会使用自定义的轻量级自旋锁作为同步后端，无需依赖任何第三方库。
 
 ---
 
@@ -99,14 +99,14 @@
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.3.1"
+atomic-tagged-ptr = "0.3.2"
 ```
 
 如果需要在 `no_std` 环境下使用，请禁用默认特性：
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.3.1", default-features = false }
+atomic-tagged-ptr = { version = "0.3.2", default-features = false }
 ```
 
 ---
