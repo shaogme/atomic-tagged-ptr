@@ -179,6 +179,28 @@ impl<T> AtomicTaggedPtrImpl<T> {
             Err(bits) => Err(Self::unpack(bits)),
         }
     }
+
+    /// Atomically exchanges the value and returns the old value.
+    #[inline]
+    pub(crate) fn swap(
+        &self,
+        ptr: Option<NonNull<T>>,
+        tag: Tag,
+        order: Ordering,
+    ) -> (Option<NonNull<T>>, Tag) {
+        let raw_ptr = ptr
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(core::ptr::null());
+        let bits = Self::pack(raw_ptr, tag);
+        let old_bits = self.bits.swap(bits, order);
+        Self::unpack(old_bits)
+    }
+
+    /// Consumes the atomic and returns the inner value.
+    #[inline]
+    pub(crate) fn into_inner(self) -> (Option<NonNull<T>>, Tag) {
+        Self::unpack(self.bits.into_inner())
+    }
 }
 
 #[cfg(test)]

@@ -38,13 +38,6 @@ impl<T> Ptr<T> {
     pub const fn new(ptr: Option<NonNull<T>>) -> Self {
         Self { inner: ptr }
     }
-
-    /// Creates a new `Ptr` wrapper from a null pointer.
-    #[inline]
-    pub const fn null() -> Self {
-        Self { inner: None }
-    }
-
     /// Converts the pointer into a raw mutable pointer `*mut T`.
     /// Returns a null pointer if the underlying value is `None`.
     #[inline]
@@ -91,6 +84,124 @@ impl<T> Ptr<T> {
     #[inline]
     pub fn is_none(self) -> bool {
         self.inner.is_none()
+    }
+
+    /// Returns a shared reference to the value if the pointer is not null.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the pointer is valid, aligned, points to a valid initialized value,
+    /// and respects the aliasing rules of Rust references.
+    #[inline]
+    pub unsafe fn as_ref<'a>(self) -> Option<&'a T> {
+        self.inner.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Returns a mutable reference to the value if the pointer is not null.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the pointer is valid, aligned, points to a valid initialized value,
+    /// and respects the aliasing rules of Rust references.
+    #[inline]
+    pub unsafe fn as_mut<'a>(mut self) -> Option<&'a mut T> {
+        self.inner.as_mut().map(|p| unsafe { p.as_mut() })
+    }
+
+    /// Unwraps the inner `NonNull<T>`, panicking with the given message if it is `None`.
+    #[inline]
+    pub fn expect(self, msg: &str) -> NonNull<T> {
+        self.inner.expect(msg)
+    }
+
+    /// Unwraps the inner `NonNull<T>`, panicking if it is `None`.
+    #[inline]
+    pub fn unwrap(self) -> NonNull<T> {
+        self.inner
+            .expect("called `Ptr::unwrap()` on a null pointer")
+    }
+
+    /// Returns the contained `NonNull<T>` or a default.
+    #[inline]
+    pub fn unwrap_or(self, default: NonNull<T>) -> NonNull<T> {
+        self.inner.unwrap_or(default)
+    }
+
+    /// Maps the inner `NonNull<T>` pointer to a new pointer of another type.
+    #[inline]
+    pub fn map<U, F>(self, f: F) -> Ptr<U>
+    where
+        F: FnOnce(NonNull<T>) -> NonNull<U>,
+    {
+        Ptr::new(self.inner.map(f))
+    }
+
+    /// Maps the inner `NonNull<T>` pointer to a value, or returns a default value.
+    #[inline]
+    pub fn map_or<U, F>(self, default: U, f: F) -> U
+    where
+        F: FnOnce(NonNull<T>) -> U,
+    {
+        self.inner.map_or(default, f)
+    }
+
+    /// Maps the inner `NonNull<T>` pointer to a value, or evaluates a default closure.
+    #[inline]
+    pub fn map_or_else<U, D, F>(self, default: D, f: F) -> U
+    where
+        D: FnOnce() -> U,
+        F: FnOnce(NonNull<T>) -> U,
+    {
+        self.inner.map_or_else(default, f)
+    }
+}
+
+impl<T> fmt::Pointer for Ptr<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&self.as_ptr(), f)
+    }
+}
+
+impl<T> PartialOrd for Ptr<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for Ptr<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_ptr().cmp(&other.as_ptr())
+    }
+}
+
+impl<T> From<Ptr<T>> for *const T {
+    #[inline]
+    fn from(ptr: Ptr<T>) -> Self {
+        ptr.as_ptr()
+    }
+}
+
+impl<T> From<Ptr<T>> for *mut T {
+    #[inline]
+    fn from(ptr: Ptr<T>) -> Self {
+        ptr.as_mut_ptr()
+    }
+}
+
+impl<T> From<Ptr<T>> for Option<*const T> {
+    #[inline]
+    fn from(ptr: Ptr<T>) -> Self {
+        ptr.inner.map(|p| p.as_ptr() as *const T)
+    }
+}
+
+impl<T> From<Ptr<T>> for Option<*mut T> {
+    #[inline]
+    fn from(ptr: Ptr<T>) -> Self {
+        ptr.inner.map(|p| p.as_ptr())
     }
 }
 
@@ -197,7 +308,6 @@ impl<T> From<TaggedPtr<T>> for Option<NonNull<T>> {
 
 /// A packaged representation of a pointer and a generation tag.
 /// Used for atomic operations with `AtomicTaggedPtr`.
-#[derive(PartialEq, Eq, Hash)]
 pub struct TaggedPtr<T> {
     /// The physical pointer wrapper.
     pub ptr: Ptr<T>,
@@ -211,6 +321,23 @@ impl<T> Clone for TaggedPtr<T> {
     #[inline]
     fn clone(&self) -> Self {
         *self
+    }
+}
+
+impl<T> PartialEq for TaggedPtr<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr == other.ptr && self.tag == other.tag
+    }
+}
+
+impl<T> Eq for TaggedPtr<T> {}
+
+impl<T> core::hash::Hash for TaggedPtr<T> {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.ptr.hash(state);
+        self.tag.hash(state);
     }
 }
 
@@ -241,6 +368,125 @@ impl<T> TaggedPtr<T> {
     #[inline]
     pub fn decompose(self) -> (Ptr<T>, crate::Tag) {
         (self.ptr, self.tag)
+    }
+
+    /// Converts the pointer into a raw const pointer `*const T`.
+    /// Returns a null pointer if the underlying value is `None`.
+    #[inline]
+    pub fn as_ptr(self) -> *const T {
+        self.ptr.as_ptr()
+    }
+
+    /// Converts the pointer into a raw mutable pointer `*mut T`.
+    /// Returns a null pointer if the underlying value is `None`.
+    #[inline]
+    pub fn as_mut_ptr(self) -> *mut T {
+        self.ptr.as_mut_ptr()
+    }
+
+    /// Returns `true` if the pointer is null.
+    #[inline]
+    pub fn is_null(self) -> bool {
+        self.ptr.is_null()
+    }
+
+    /// Returns `true` if the pointer is not null (is some).
+    #[inline]
+    pub fn is_some(self) -> bool {
+        self.ptr.is_some()
+    }
+
+    /// Returns `true` if the pointer is null (is none).
+    #[inline]
+    pub fn is_none(self) -> bool {
+        self.ptr.is_none()
+    }
+
+    /// Returns a shared reference to the value if the pointer is not null.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the pointer is valid, aligned, points to a valid initialized value,
+    /// and respects the aliasing rules of Rust references.
+    #[inline]
+    pub unsafe fn as_ref<'a>(self) -> Option<&'a T> {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    /// Returns a mutable reference to the value if the pointer is not null.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the pointer is valid, aligned, points to a valid initialized value,
+    /// and respects the aliasing rules of Rust references.
+    #[inline]
+    pub unsafe fn as_mut<'a>(self) -> Option<&'a mut T> {
+        unsafe { self.ptr.as_mut() }
+    }
+
+    /// Returns a new `TaggedPtr` with a different pointer but the same tag.
+    #[inline]
+    pub fn with_ptr<U>(self, ptr: impl Into<Ptr<U>>) -> TaggedPtr<U> {
+        TaggedPtr {
+            ptr: ptr.into(),
+            tag: self.tag,
+        }
+    }
+
+    /// Returns a new `TaggedPtr` with a different tag but the same pointer.
+    #[inline]
+    pub fn with_tag(self, tag: crate::Tag) -> Self {
+        Self { ptr: self.ptr, tag }
+    }
+
+    /// Maps the pointer part of the `TaggedPtr` using the given closure.
+    #[inline]
+    pub fn map_ptr<U, F>(self, f: F) -> TaggedPtr<U>
+    where
+        F: FnOnce(Ptr<T>) -> Ptr<U>,
+    {
+        TaggedPtr {
+            ptr: f(self.ptr),
+            tag: self.tag,
+        }
+    }
+}
+
+impl<T> fmt::Pointer for TaggedPtr<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&self.ptr, f)
+    }
+}
+
+impl<T> PartialOrd for TaggedPtr<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for TaggedPtr<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match self.ptr.cmp(&other.ptr) {
+            core::cmp::Ordering::Equal => self.tag.cmp(&other.tag),
+            ord => ord,
+        }
+    }
+}
+
+impl<T> From<TaggedPtr<T>> for *const T {
+    #[inline]
+    fn from(tagged: TaggedPtr<T>) -> Self {
+        tagged.as_ptr()
+    }
+}
+
+impl<T> From<TaggedPtr<T>> for *mut T {
+    #[inline]
+    fn from(tagged: TaggedPtr<T>) -> Self {
+        tagged.as_mut_ptr()
     }
 }
 
@@ -309,5 +555,3 @@ impl<T> From<TaggedPtr<T>> for (Ptr<T>, crate::Tag) {
         (tagged.ptr, tagged.tag)
     }
 }
-
-

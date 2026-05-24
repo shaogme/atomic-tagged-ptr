@@ -99,14 +99,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.2.0"
+atomic-tagged-ptr = "0.3.0"
 ```
 
 To use in `no_std` environments, disable the default features:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.2.0", default-features = false }
+atomic-tagged-ptr = { version = "0.3.0", default-features = false }
 ```
 
 ---
@@ -201,20 +201,31 @@ impl TreiberStack {
 ### `AtomicTaggedPtr<T>`
 The core struct representing an atomic tagged pointer.
 - `pub fn new(val: impl Into<TaggedPtr<T>>) -> Self`: Creates a new atomic tagged pointer initialized with the given tagged pointer.
-- `pub fn load(&self, order: Ordering) -> TaggedPtr<T>`: Loads the `TaggedPtr<T>` (containing pointer wrapper `Ptr<T>` and tag) atomically.
+- `pub fn load(&self, order: Ordering) -> TaggedPtr<T>`: Loads the `TaggedPtr<T>` atomically.
 - `pub fn store(&self, val: impl Into<TaggedPtr<T>>, order: Ordering)`: Stores a new tagged pointer atomically.
+- `pub fn swap(&self, val: impl Into<TaggedPtr<T>>, order: Ordering) -> TaggedPtr<T>`: Atomically exchanges the value and returns the old value.
 - `pub fn compare_exchange(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Compares and exchanges the pointer and tag values.
 - `pub fn compare_exchange_weak(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Weaker, more efficient variant of `compare_exchange` suitable for spin-loops.
+- `pub fn into_inner(self) -> TaggedPtr<T>`: Consumes the atomic and returns the inner value.
+- `pub fn fetch_update<F>(&self, set_order: Ordering, fetch_order: Ordering, mut f: F) -> Result<TaggedPtr<T>, TaggedPtr<T>> where F: FnMut(TaggedPtr<T>) -> Option<TaggedPtr<T>>`: Fetches the value, applies a function to it, and attempts to store the result using a CAS loop.
+- Implements `From<TaggedPtr<T>>` and `From<(Ptr<T>, Tag)>` for constructing the atomic wrapper.
 
 ### `TaggedPtr<T>`
 A packaging representation of a pointer wrapper `Ptr<T>` and a generation tag `Tag`.
 - `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: Into<Ptr<T>>`: Creates a new `TaggedPtr`. Supports any type implementing `Into<Ptr<T>>` (such as `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`).
 - `pub fn decompose(self) -> (Ptr<T>, Tag)`: Deconstructs the `TaggedPtr` into a tuple of `(Ptr<T>, Tag)`.
+- `pub fn as_ptr(self) -> *const T` / `pub fn as_mut_ptr(self) -> *mut T`: Converts into raw pointers (returns null pointer if empty).
+- `pub fn is_null(self) -> bool` / `pub fn is_some(self) -> bool` / `pub fn is_none(self) -> bool`: Checks the pointer status.
+- `pub unsafe fn as_ref<'a>(self) -> Option<&'a T>` / `pub unsafe fn as_mut<'a>(self) -> Option<&'a mut T>`: Dereferences the pointer portion.
+- `pub fn with_ptr<U>(self, ptr: impl Into<Ptr<U>>) -> TaggedPtr<U>`: Returns a new `TaggedPtr` with a different pointer but same tag.
+- `pub fn with_tag(self, tag: Tag) -> Self`: Returns a new `TaggedPtr` with a different tag but same pointer.
+- `pub fn map_ptr<U, F>(self, f: F) -> TaggedPtr<U> where F: FnOnce(Ptr<T>) -> Ptr<U>`: Maps the pointer portion.
 - `pub ptr: Ptr<T>`: The underlying physical pointer wrapper.
 - `pub tag: Tag`: The underlying generation tag.
 - Implements `From` enabling conversion from `(Ptr<T>, Tag)`, `(Option<NonNull<T>>, Tag)`, `(NonNull<T>, Tag)`, `(*const T, Tag)`, or `(*mut T, Tag)` to `TaggedPtr`.
-- Implements `Into<Ptr<T>>` and `Into<Option<NonNull<T>>>` facilitating direct extraction of the pointer portion.
-- Manually implements `Copy`, `Clone`, and `Default` without generic bounds constraint on `T`.
+- Implements `From<TaggedPtr<T>>` for `*const T`, `*mut T`, `Ptr<T>` and `Option<NonNull<T>>`.
+- Implements `Pointer` formatting, `PartialOrd`, and `Ord` (compares pointer first, then tag).
+- Manually implements `Copy`, `Clone`, `Default`, `PartialEq`, `Eq`, and `Hash` without generic bounds constraint on `T`.
 
 ### `Ptr<T>`
 A pointer wrapper returned by `AtomicTaggedPtr` operations to facilitate raw pointer and `Option` conversions.
@@ -223,8 +234,12 @@ A pointer wrapper returned by `AtomicTaggedPtr` operations to facilitate raw poi
 - `pub fn option(self) -> Option<NonNull<T>>`: Extracts the underlying `Option<NonNull<T>>`.
 - `pub fn as_option(self) -> Option<NonNull<T>>`: Extracts the underlying `Option<NonNull<T>>`.
 - `pub fn is_null(self) -> bool` / `pub fn is_some(self) -> bool` / `pub fn is_none(self) -> bool`: Query the pointer status.
+- `pub unsafe fn as_ref<'a>(self) -> Option<&'a T>` / `pub unsafe fn as_mut<'a>(self) -> Option<&'a mut T>`: Dereferences the pointer portion.
+- `pub fn expect(self, msg: &str) -> NonNull<T>` / `pub fn unwrap(self) -> NonNull<T>` / `pub fn unwrap_or(self, default: NonNull<T>) -> NonNull<T>`: Option-like unwrap helpers.
+- `pub fn map<U, F>(self, f: F) -> Ptr<U>` / `pub fn map_or<U, F>(self, default: U, f: F) -> U` / `pub fn map_or_else<U, D, F>(self, default: D, f: F) -> U`: Option-like map helpers.
 - Implements `From` for converting from `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, `*mut T`, and `TaggedPtr<T>`.
-- Implements `Into<Option<NonNull<T>>>` for extracting the underlying pointer.
+- Implements `From<Ptr<T>>` for `*const T`, `*mut T`, `Option<*const T>`, `Option<*mut T>`, and `Option<NonNull<T>>`.
+- Implements `Pointer` formatting, `PartialOrd`, and `Ord` (compares pointer address).
 - Implements `PartialEq` allowing direct comparisons between `Ptr<T>` and `NonNull<T>`, `Option<NonNull<T>>`, or raw `*const T`/`*mut T` pointers.
 
 ### `Tag`
@@ -232,7 +247,10 @@ A wrapper around the platform-specific generation count.
 - `pub const fn new(value: usize) -> Self`: Creates a new `Tag` with values masked to the platform limit.
 - `pub const fn value(self) -> usize`: Unwraps the raw tag value.
 - `pub const fn wrapping_add(self, rhs: usize) -> Self`: Performs wrapping addition within platform limits.
+- `pub const fn wrapping_sub(self, rhs: usize) -> Self`: Performs wrapping subtraction within platform limits.
+- `pub const fn next(self) -> Self`: Returns the next tag value, wrapping on overflow.
 - `pub const fn max_value() -> Self`: Returns the maximum tag value allowed on the current platform layout.
+- Implements `Add<usize>`, `AddAssign<usize>`, `Sub<usize>`, and `SubAssign<usize>` wrapping operators.
 
 ---
 

@@ -43,6 +43,18 @@ impl<T> Mutex<T> {
             MutexGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
         }
     }
+
+    #[inline]
+    pub fn into_inner(self) -> T {
+        #[cfg(feature = "parking_lot")]
+        {
+            self.0.into_inner()
+        }
+        #[cfg(not(feature = "parking_lot"))]
+        {
+            self.0.into_inner().unwrap_or_else(|e| e.into_inner())
+        }
+    }
 }
 
 pub(crate) struct MutexGuard<'a, T>(InnerMutexGuard<'a, T>);
@@ -147,6 +159,29 @@ impl<T> AtomicTaggedPtrImpl<T> {
         failure: Ordering,
     ) -> super::RawTaggedPtrResult<T> {
         self.compare_exchange(current, new, success, failure)
+    }
+
+    /// Atomically exchanges the value and returns the old value.
+    #[inline]
+    pub(crate) fn swap(
+        &self,
+        ptr: Option<NonNull<T>>,
+        tag: Tag,
+        order: Ordering,
+    ) -> (Option<NonNull<T>>, Tag) {
+        if order != Ordering::Relaxed {
+            core::sync::atomic::fence(order);
+        }
+        let mut guard = self.inner.lock();
+        let old = *guard;
+        *guard = (ptr, tag);
+        old
+    }
+
+    /// Consumes the atomic and returns the inner value.
+    #[inline]
+    pub(crate) fn into_inner(self) -> (Option<NonNull<T>>, Tag) {
+        self.inner.into_inner()
     }
 }
 

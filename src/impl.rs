@@ -83,6 +83,18 @@ impl Tag {
         Self::new(self.0.wrapping_add(rhs))
     }
 
+    /// Performs wrapping subtraction on the tag value.
+    #[inline]
+    pub const fn wrapping_sub(self, rhs: usize) -> Self {
+        Self::new(self.0.wrapping_sub(rhs))
+    }
+
+    /// Returns the next tag value, wrapping around on overflow.
+    #[inline]
+    pub const fn next(self) -> Self {
+        self.wrapping_add(1)
+    }
+
     /// Returns the maximum tag value allowed on this platform.
     #[inline]
     pub const fn max_value() -> Self {
@@ -113,6 +125,38 @@ impl From<Tag> for usize {
     #[inline]
     fn from(tag: Tag) -> usize {
         tag.0
+    }
+}
+
+impl core::ops::Add<usize> for Tag {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: usize) -> Self::Output {
+        self.wrapping_add(rhs)
+    }
+}
+
+impl core::ops::AddAssign<usize> for Tag {
+    #[inline]
+    fn add_assign(&mut self, rhs: usize) {
+        *self = *self + rhs;
+    }
+}
+
+impl core::ops::Sub<usize> for Tag {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: usize) -> Self::Output {
+        self.wrapping_sub(rhs)
+    }
+}
+
+impl core::ops::SubAssign<usize> for Tag {
+    #[inline]
+    fn sub_assign(&mut self, rhs: usize) {
+        *self = *self - rhs;
     }
 }
 
@@ -175,8 +219,7 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn store(&self, val: impl Into<TaggedPtr<T>>, order: Ordering) {
         let val = val.into();
-        self.inner
-            .store(val.ptr.option(), val.tag, order);
+        self.inner.store(val.ptr.option(), val.tag, order);
     }
 
     /// Exchanges the current values with new ones if the current values match expectations.
@@ -240,6 +283,50 @@ impl<T> AtomicTaggedPtr<T> {
             }),
         }
     }
+
+    /// Atomically exchanges the value and returns the old value.
+    #[inline]
+    pub fn swap(&self, val: impl Into<TaggedPtr<T>>, order: Ordering) -> TaggedPtr<T> {
+        let val = val.into();
+        let (raw_ptr, tag) = self.inner.swap(val.ptr.option(), val.tag, order);
+        TaggedPtr {
+            ptr: Ptr::new(raw_ptr),
+            tag,
+        }
+    }
+
+    /// Consumes the atomic and returns the inner value.
+    #[inline]
+    pub fn into_inner(self) -> TaggedPtr<T> {
+        let (raw_ptr, tag) = self.inner.into_inner();
+        TaggedPtr {
+            ptr: Ptr::new(raw_ptr),
+            tag,
+        }
+    }
+
+    /// Fetches the value, applies a function to it, and attempts to store the result.
+    ///
+    /// This is a convenience method for compare-and-swap loops.
+    #[inline]
+    pub fn fetch_update<F>(
+        &self,
+        set_order: Ordering,
+        fetch_order: Ordering,
+        mut f: F,
+    ) -> Result<TaggedPtr<T>, TaggedPtr<T>>
+    where
+        F: FnMut(TaggedPtr<T>) -> Option<TaggedPtr<T>>,
+    {
+        let mut prev = self.load(fetch_order);
+        while let Some(next) = f(prev) {
+            match self.compare_exchange_weak(prev, next, set_order, fetch_order) {
+                Ok(x) => return Ok(x),
+                Err(next_prev) => prev = next_prev,
+            }
+        }
+        Err(prev)
+    }
 }
 
 // --- Common Trait Implementations ---
@@ -259,6 +346,20 @@ impl<T> fmt::Debug for AtomicTaggedPtr<T> {
             .field("pointer", &val.ptr)
             .field("tag", &val.tag)
             .finish()
+    }
+}
+
+impl<T> From<TaggedPtr<T>> for AtomicTaggedPtr<T> {
+    #[inline]
+    fn from(val: TaggedPtr<T>) -> Self {
+        Self::new(val)
+    }
+}
+
+impl<T> From<(Ptr<T>, Tag)> for AtomicTaggedPtr<T> {
+    #[inline]
+    fn from(val: (Ptr<T>, Tag)) -> Self {
+        Self::new(val)
     }
 }
 
@@ -446,7 +547,12 @@ mod tests {
         assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), None);
         assert_eq!(atom.load(Ordering::Relaxed).tag, Tag::new(789));
 
-        let res = atom.compare_exchange((None, Tag::new(789)), (mut_ptr1, Tag::new(999)), Ordering::Relaxed, Ordering::Relaxed);
+        let res = atom.compare_exchange(
+            (None, Tag::new(789)),
+            (mut_ptr1, Tag::new(999)),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
         assert!(res.is_ok());
         assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
         assert_eq!(atom.load(Ordering::Relaxed).tag, Tag::new(999));
@@ -493,5 +599,126 @@ mod tests {
         assert!(ptr_none == None);
         assert!(ptr_none == core::ptr::null::<i32>());
         assert!(ptr_none == core::ptr::null_mut::<i32>());
+    }
+
+    #[test]
+    fn test_new_traits_and_methods() {
+        let mut val = 42;
+        let non_null = NonNull::new(&mut val as *mut i32).unwrap();
+        let ptr_some = Ptr::new(Some(non_null));
+        let ptr_none = Ptr::<i32>::new(None);
+
+        // 1. Ptr::as_ref / as_mut
+        unsafe {
+            assert_eq!(ptr_some.as_ref(), Some(&42));
+            assert_eq!(ptr_none.as_ref(), None);
+            *ptr_some.as_mut().unwrap() = 100;
+            assert_eq!(ptr_some.as_ref(), Some(&100));
+            assert_eq!(ptr_none.as_mut(), None);
+        }
+
+        // 2. Ptr::expect / unwrap / unwrap_or
+        assert_eq!(ptr_some.expect("should be valid"), non_null);
+        assert_eq!(ptr_some.unwrap(), non_null);
+        let other_val = 99;
+        let other_nn = NonNull::new(&other_val as *const i32 as *mut i32).unwrap();
+        assert_eq!(ptr_none.unwrap_or(other_nn), other_nn);
+
+        // 3. Ptr::map / map_or / map_or_else
+        let mapped = ptr_some.map(|p| p);
+        assert_eq!(mapped, ptr_some);
+        assert_eq!(ptr_some.map_or(0, |p| unsafe { *p.as_ptr() }), 100);
+        assert_eq!(ptr_none.map_or(0, |p| unsafe { *p.as_ptr() }), 0);
+        assert_eq!(ptr_some.map_or_else(|| 0, |p| unsafe { *p.as_ptr() }), 100);
+        assert_eq!(ptr_none.map_or_else(|| 0, |p| unsafe { *p.as_ptr() }), 0);
+
+        // 4. Ptr Pointer formatting / Ord
+        let format_str = format!("{:p}", ptr_some);
+        assert!(!format_str.is_empty());
+        assert!(ptr_some > ptr_none || ptr_some < ptr_none || ptr_some == ptr_none);
+        assert_eq!(ptr_some.cmp(&ptr_some), core::cmp::Ordering::Equal);
+
+        // 5. Ptr conversions
+        let raw_const: *const i32 = ptr_some.into();
+        assert_eq!(raw_const, non_null.as_ptr() as *const i32);
+        let raw_mut: *mut i32 = ptr_some.into();
+        assert_eq!(raw_mut, non_null.as_ptr());
+        let opt_const: Option<*const i32> = ptr_some.into();
+        assert_eq!(opt_const, Some(non_null.as_ptr() as *const i32));
+        let opt_mut: Option<*mut i32> = ptr_none.into();
+        assert_eq!(opt_mut, None);
+
+        // 6. TaggedPtr methods & traits
+        let tag = Tag::new(10);
+        let tagged = TaggedPtr::new(ptr_some, tag);
+        assert_eq!(tagged.as_ptr(), raw_const);
+        assert_eq!(tagged.as_mut_ptr(), raw_mut);
+        assert!(tagged.is_some());
+        assert!(!tagged.is_null());
+        assert!(!tagged.is_none());
+        unsafe {
+            assert_eq!(tagged.as_ref(), Some(&100));
+            *tagged.as_mut().unwrap() = 200;
+            assert_eq!(tagged.as_ref(), Some(&200));
+        }
+
+        let tagged_with_ptr = tagged.with_ptr(ptr_none);
+        assert!(tagged_with_ptr.is_none());
+        assert_eq!(tagged_with_ptr.tag, tag);
+
+        let tagged_with_tag = tagged.with_tag(Tag::new(20));
+        assert_eq!(tagged_with_tag.tag.value(), 20);
+
+        let mapped_tagged = tagged.map_ptr(|p| p);
+        assert_eq!(mapped_tagged, tagged);
+
+        // TaggedPtr Pointer / Ord / Conversions
+        let format_tagged = format!("{:p}", tagged);
+        assert!(!format_tagged.is_empty());
+        assert_eq!(tagged.cmp(&tagged), core::cmp::Ordering::Equal);
+        let raw_const_tagged: *const i32 = tagged.into();
+        assert_eq!(raw_const_tagged, raw_const);
+        let raw_mut_tagged: *mut i32 = tagged.into();
+        assert_eq!(raw_mut_tagged, raw_mut);
+
+        // TaggedPtr manual PartialEq/Eq/Hash
+        assert_eq!(tagged, TaggedPtr::new(ptr_some, tag));
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use core::hash::Hash;
+        use core::hash::Hasher;
+        tagged.hash(&mut hasher);
+        assert!(hasher.finish() > 0);
+
+        // 7. Tag arithmetic & methods
+        let tag1 = Tag::new(5);
+        assert_eq!(tag1.wrapping_sub(2).value(), 3);
+        assert_eq!(tag1.next().value(), 6);
+        assert_eq!((tag1 + 2).value(), 7);
+        assert_eq!((tag1 - 2).value(), 3);
+        let mut mut_tag = tag1;
+        mut_tag += 2;
+        assert_eq!(mut_tag.value(), 7);
+        mut_tag -= 2;
+        assert_eq!(mut_tag.value(), 5);
+
+        // 8. AtomicTaggedPtr swap / into_inner / fetch_update / From
+        let atom = AtomicTaggedPtr::new(tagged);
+        let old = atom.swap(TaggedPtr::new(ptr_none, Tag::new(99)), Ordering::SeqCst);
+        assert_eq!(old, tagged);
+        assert_eq!(atom.load(Ordering::SeqCst).tag.value(), 99);
+
+        let inner_val = atom.into_inner();
+        assert!(inner_val.ptr.is_none());
+        assert_eq!(inner_val.tag.value(), 99);
+
+        let atom2 = AtomicTaggedPtr::from(tagged);
+        let res = atom2.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |t| {
+            Some(t.with_tag(t.tag + 1))
+        });
+        assert!(res.is_ok());
+        assert_eq!(atom2.load(Ordering::SeqCst).tag.value(), tag.value() + 1);
+
+        let atom3 = AtomicTaggedPtr::from((ptr_some, tag));
+        assert_eq!(atom3.load(Ordering::SeqCst).tag.value(), tag.value());
     }
 }
