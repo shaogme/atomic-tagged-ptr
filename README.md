@@ -99,14 +99,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.3.0"
+atomic-tagged-ptr = "0.3.1"
 ```
 
 To use in `no_std` environments, disable the default features:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.3.0", default-features = false }
+atomic-tagged-ptr = { version = "0.3.1", default-features = false }
 ```
 
 ---
@@ -208,11 +208,20 @@ The core struct representing an atomic tagged pointer.
 - `pub fn compare_exchange_weak(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Weaker, more efficient variant of `compare_exchange` suitable for spin-loops.
 - `pub fn into_inner(self) -> TaggedPtr<T>`: Consumes the atomic and returns the inner value.
 - `pub fn fetch_update<F>(&self, set_order: Ordering, fetch_order: Ordering, mut f: F) -> Result<TaggedPtr<T>, TaggedPtr<T>> where F: FnMut(TaggedPtr<T>) -> Option<TaggedPtr<T>>`: Fetches the value, applies a function to it, and attempts to store the result using a CAS loop.
-- Implements `From<TaggedPtr<T>>` and `From<(Ptr<T>, Tag)>` for constructing the atomic wrapper.
+- `pub fn fetch_add_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`: Atomically adds `val` to the tag, returning the previous tagged pointer.
+- `pub fn fetch_sub_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`: Atomically subtracts `val` from the tag, returning the previous tagged pointer.
+- `pub fn fetch_and_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`: Atomically performs a bitwise AND on the tag.
+- `pub fn fetch_or_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`: Atomically performs a bitwise OR on the tag.
+- `pub fn fetch_xor_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`: Atomically performs a bitwise XOR on the tag.
+- `pub fn fetch_set_ptr(&self, ptr: impl Into<Ptr<T>>, order: Ordering) -> TaggedPtr<T>`: Atomically updates the pointer part, returning the previous tagged pointer.
+- `pub fn fetch_set_tag(&self, tag: Tag, order: Ordering) -> TaggedPtr<T>`: Atomically updates the tag part, returning the previous tagged pointer.
+- Implements `From<TaggedPtr<T>>`, `From<(Ptr<T>, Tag)>`, `From<Ptr<T>>`, `From<Option<NonNull<T>>>`, `From<NonNull<T>>`, `From<*const T>`, and `From<*mut T>` for constructing the atomic wrapper.
 
 ### `TaggedPtr<T>`
 A packaging representation of a pointer wrapper `Ptr<T>` and a generation tag `Tag`.
 - `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: Into<Ptr<T>>`: Creates a new `TaggedPtr`. Supports any type implementing `Into<Ptr<T>>` (such as `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`).
+- `pub const fn null() -> Self`: Creates a new `TaggedPtr` with a null pointer and the default tag.
+- `pub fn cast<U>(self) -> TaggedPtr<U>`: Casts the pointer part to a pointer of another type, keeping the tag unchanged.
 - `pub fn decompose(self) -> (Ptr<T>, Tag)`: Deconstructs the `TaggedPtr` into a tuple of `(Ptr<T>, Tag)`.
 - `pub fn as_ptr(self) -> *const T` / `pub fn as_mut_ptr(self) -> *mut T`: Converts into raw pointers (returns null pointer if empty).
 - `pub fn is_null(self) -> bool` / `pub fn is_some(self) -> bool` / `pub fn is_none(self) -> bool`: Checks the pointer status.
@@ -220,15 +229,19 @@ A packaging representation of a pointer wrapper `Ptr<T>` and a generation tag `T
 - `pub fn with_ptr<U>(self, ptr: impl Into<Ptr<U>>) -> TaggedPtr<U>`: Returns a new `TaggedPtr` with a different pointer but same tag.
 - `pub fn with_tag(self, tag: Tag) -> Self`: Returns a new `TaggedPtr` with a different tag but same pointer.
 - `pub fn map_ptr<U, F>(self, f: F) -> TaggedPtr<U> where F: FnOnce(Ptr<T>) -> Ptr<U>`: Maps the pointer portion.
+- Supports pointer reading, writing, swapping, memory copying, and pointer arithmetic (`read`, `read_volatile`, `read_unaligned`, `write`, `write_volatile`, `write_unaligned`, `replace`, `swap`, `copy_to`, `copy_to_nonoverlapping`, `copy_from`, `copy_from_nonoverlapping`, `offset`, `add`, `sub`, `wrapping_offset`, `wrapping_add`, `wrapping_sub`).
 - `pub ptr: Ptr<T>`: The underlying physical pointer wrapper.
 - `pub tag: Tag`: The underlying generation tag.
 - Implements `From` enabling conversion from `(Ptr<T>, Tag)`, `(Option<NonNull<T>>, Tag)`, `(NonNull<T>, Tag)`, `(*const T, Tag)`, or `(*mut T, Tag)` to `TaggedPtr`.
 - Implements `From<TaggedPtr<T>>` for `*const T`, `*mut T`, `Ptr<T>` and `Option<NonNull<T>>`.
 - Implements `Pointer` formatting, `PartialOrd`, and `Ord` (compares pointer first, then tag).
+- Implements `AsRef<Ptr<T>>` and `AsRef<Tag>`.
 - Manually implements `Copy`, `Clone`, `Default`, `PartialEq`, `Eq`, and `Hash` without generic bounds constraint on `T`.
 
 ### `Ptr<T>`
 A pointer wrapper returned by `AtomicTaggedPtr` operations to facilitate raw pointer and `Option` conversions.
+- `pub const fn null() -> Self` / `pub const fn none() -> Self`: Creates a null `Ptr`.
+- `pub fn cast<U>(self) -> Ptr<U>`: Casts to a pointer of another type.
 - `pub fn as_ptr(self) -> *const T`: Converts into a raw const pointer `*const T` (returns a null pointer if empty).
 - `pub fn as_mut_ptr(self) -> *mut T`: Converts into a raw mutable pointer `*mut T` (returns a null pointer if empty).
 - `pub fn option(self) -> Option<NonNull<T>>`: Extracts the underlying `Option<NonNull<T>>`.
@@ -237,10 +250,12 @@ A pointer wrapper returned by `AtomicTaggedPtr` operations to facilitate raw poi
 - `pub unsafe fn as_ref<'a>(self) -> Option<&'a T>` / `pub unsafe fn as_mut<'a>(self) -> Option<&'a mut T>`: Dereferences the pointer portion.
 - `pub fn expect(self, msg: &str) -> NonNull<T>` / `pub fn unwrap(self) -> NonNull<T>` / `pub fn unwrap_or(self, default: NonNull<T>) -> NonNull<T>`: Option-like unwrap helpers.
 - `pub fn map<U, F>(self, f: F) -> Ptr<U>` / `pub fn map_or<U, F>(self, default: U, f: F) -> U` / `pub fn map_or_else<U, D, F>(self, default: D, f: F) -> U`: Option-like map helpers.
+- Supports pointer reading, writing, swapping, memory copying, and pointer arithmetic (`read`, `read_volatile`, `read_unaligned`, `write`, `write_volatile`, `write_unaligned`, `replace`, `swap`, `copy_to`, `copy_to_nonoverlapping`, `copy_from`, `copy_from_nonoverlapping`, `offset`, `add`, `sub`, `wrapping_offset`, `wrapping_add`, `wrapping_sub`).
 - Implements `From` for converting from `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, `*mut T`, and `TaggedPtr<T>`.
 - Implements `From<Ptr<T>>` for `*const T`, `*mut T`, `Option<*const T>`, `Option<*mut T>`, and `Option<NonNull<T>>`.
 - Implements `Pointer` formatting, `PartialOrd`, and `Ord` (compares pointer address).
 - Implements `PartialEq` allowing direct comparisons between `Ptr<T>` and `NonNull<T>`, `Option<NonNull<T>>`, or raw `*const T`/`*mut T` pointers.
+- Implements `AsRef<Option<NonNull<T>>>`.
 
 ### `Tag`
 A wrapper around the platform-specific generation count.
@@ -251,6 +266,8 @@ A wrapper around the platform-specific generation count.
 - `pub const fn next(self) -> Self`: Returns the next tag value, wrapping on overflow.
 - `pub const fn max_value() -> Self`: Returns the maximum tag value allowed on the current platform layout.
 - Implements `Add<usize>`, `AddAssign<usize>`, `Sub<usize>`, and `SubAssign<usize>` wrapping operators.
+- Implements `BitAnd<usize>`, `BitAnd<Tag>`, `BitAndAssign<usize>`, `BitAndAssign<Tag>`, `BitOr<usize>`, `BitOr<Tag>`, `BitOrAssign<usize>`, `BitOrAssign<Tag>`, `BitXor<usize>`, `BitXor<Tag>`, `BitXorAssign<usize>`, `BitXorAssign<Tag>`, and `Not` bitwise operators.
+- Implements `From<u8>`, `From<u16>`, `From<u32>`, and `From<usize>`.
 
 ---
 

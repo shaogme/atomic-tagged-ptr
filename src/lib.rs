@@ -11,14 +11,14 @@
 #[cfg(feature = "std")]
 extern crate std;
 
-pub use r#impl::AtomicTaggedPtr;
-pub use r#impl::TAG_MASK;
-pub use r#impl::Tag;
+pub use ptr::AtomicTaggedPtr;
+pub use ptr::TAG_MASK;
+pub use tag::Tag;
 pub use ptr::Ptr;
 pub use ptr::TaggedPtr;
 
-mod r#impl;
 mod ptr;
+mod tag;
 
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]

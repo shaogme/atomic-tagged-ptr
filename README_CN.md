@@ -99,14 +99,14 @@
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.3.0"
+atomic-tagged-ptr = "0.3.1"
 ```
 
 如果需要在 `no_std` 环境下使用，请禁用默认特性：
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.3.0", default-features = false }
+atomic-tagged-ptr = { version = "0.3.1", default-features = false }
 ```
 
 ---
@@ -208,11 +208,20 @@ impl TreiberStack {
 - `pub fn compare_exchange_weak(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：具有较弱语义的 `compare_exchange` 变体，允许伪失败，在自旋锁或 LL/SC 架构（如 ARM）上效率更高。
 - `pub fn into_inner(self) -> TaggedPtr<T>`：消耗原子指针并返回内部存储的 `TaggedPtr<T>`。
 - `pub fn fetch_update<F>(&self, set_order: Ordering, fetch_order: Ordering, mut f: F) -> Result<TaggedPtr<T>, TaggedPtr<T>> where F: FnMut(TaggedPtr<T>) -> Option<TaggedPtr<T>>`：基于比较交换（CAS）循环，获取当前值，应用更新闭包并原子地写回。
-- 实现了 `From<TaggedPtr<T>>` 和 `From<(Ptr<T>, Tag)>`，用于构造原子标记指针包装。
+- `pub fn fetch_add_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`：原子地递增世代标记（Tag），返回旧值。
+- `pub fn fetch_sub_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`：原子地递减世代标记（Tag），返回旧值。
+- `pub fn fetch_and_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`：对世代标记（Tag）执行原子按位与操作。
+- `pub fn fetch_or_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`：对世代标记（Tag）执行原子按位或操作。
+- `pub fn fetch_xor_tag(&self, val: usize, order: Ordering) -> TaggedPtr<T>`：对世代标记（Tag）执行原子按位异或操作。
+- `pub fn fetch_set_ptr(&self, ptr: impl Into<Ptr<T>>, order: Ordering) -> TaggedPtr<T>`：原子地更新指针部分，保持 Tag 不变。
+- `pub fn fetch_set_tag(&self, tag: Tag, order: Ordering) -> TaggedPtr<T>`：原子地更新 Tag 部分，保持指针不变。
+- 实现了 `From<TaggedPtr<T>>`、`From<(Ptr<T>, Tag)>`、`From<Ptr<T>>`、`From<Option<NonNull<T>>>`、`From<NonNull<T>>`、`From<*const T>` 和 `From<*mut T>`，用于构造原子标记指针。
 
 ### `TaggedPtr<T>`
 物理指针封装与世代标记的包装结构体。
 - `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: Into<Ptr<T>>`：创建一个新的 `TaggedPtr`，支持传入任何实现了 `Into<Ptr<T>>` 的类型（如 `NonNull<T>`、`Option<NonNull<T>>`、`*const T` 和 `*mut T`）。
+- `pub const fn null() -> Self`：创建一个带有空物理指针 and 默认世代标记的 `TaggedPtr`。
+- `pub fn cast<U>(self) -> TaggedPtr<U>`：将指针部分转换为指向新类型 `U` 的指针，保持世代标记（Tag）值不变。
 - `pub fn decompose(self) -> (Ptr<T>, Tag)`：将 `TaggedPtr` 分解为元组 `(Ptr<T>, Tag)`。
 - `pub fn as_ptr(self) -> *const T` / `pub fn as_mut_ptr(self) -> *mut T`：转换成裸只读/可写指针。若为空，返回空指针。
 - `pub fn is_null(self) -> bool` / `pub fn is_some(self) -> bool` / `pub fn is_none(self) -> bool`：判断指针部分是否为空。
@@ -220,15 +229,19 @@ impl TreiberStack {
 - `pub fn with_ptr<U>(self, ptr: impl Into<Ptr<U>>) -> TaggedPtr<U>`：保持当前 Tag 不变，返回替换指针部分后的新 `TaggedPtr`。
 - `pub fn with_tag(self, tag: Tag) -> Self`：保持当前指针部分不变，返回替换 Tag 后的新 `TaggedPtr`。
 - `pub fn map_ptr<U, F>(self, f: F) -> TaggedPtr<U> where F: FnOnce(Ptr<T>) -> Ptr<U>`：映射指针部分。
+- 支持指针读、写、交换、内存拷贝及偏移计算等算术操作 (`read`, `read_volatile`, `read_unaligned`, `write`, `write_volatile`, `write_unaligned`, `replace`, `swap`, `copy_to`, `copy_to_nonoverlapping`, `copy_from`, `copy_from_nonoverlapping`, `offset`, `add`, `sub`, `wrapping_offset`, `wrapping_add`, `wrapping_sub`)。
 - `pub ptr: Ptr<T>`：底层的物理指针封装。
 - `pub tag: Tag`：底层的世代标记。
 - 实现了 `From` 支持在 `(Ptr<T>, Tag)`、`(Option<NonNull<T>>, Tag)`、`(NonNull<T>, Tag)`、`(*const T, Tag)` 或 `(*mut T, Tag)` 与 `TaggedPtr` 之间进行转换。
 - 实现了 `From<TaggedPtr<T>>` 用于提取为 `*const T`、`*mut T`、`Ptr<T>` 以及 `Option<NonNull<T>>`。
 - 实现了 `Pointer` 格式化、`PartialOrd` 与 `Ord`（优先比较指针，其次比较 Tag）。
-- 手动实现了 `Copy`、`Clone`、`Default`、`PartialEq`、`Eq` 和 `Hash`，即使泛型参数 `T` 不满足这些 trait，`TaggedPtr<T>` 也能完美支持。
+- 实现了 `AsRef<Ptr<T>>` 和 `AsRef<Tag>`。
+- 手动实现了 `Copy`、`Clone`、`Default`、`PartialEq`、`Eq` 和 `Hash`，即使泛型参数 `T` 不满足这些 trait， `TaggedPtr<T>` 也能完美支持。
 
 ### `Ptr<T>`
 `AtomicTaggedPtr` 操作返回的指针封装结构体，便于进行裸指针和 Option 转换。
+- `pub const fn null() -> Self` / `pub const fn none() -> Self`：创建一个空的 `Ptr` 包装器。
+- `pub fn cast<U>(self) -> Ptr<U>`：将内部指针转换为指向另一类型 `U`。
 - `pub fn as_ptr(self) -> *const T`：转换成裸只读指针。若为空，返回空指针。
 - `pub fn as_mut_ptr(self) -> *mut T`：转换成裸可写指针。若为空，返回空指针。
 - `pub fn option(self) -> Option<NonNull<T>>`：获取底层的 `Option<NonNull<T>>`。
@@ -237,10 +250,12 @@ impl TreiberStack {
 - `pub unsafe fn as_ref<'a>(self) -> Option<&'a T>` / `pub unsafe fn as_mut<'a>(self) -> Option<&'a mut T>`: 对底层非空指针进行不安全的解引用。
 - `pub fn expect(self, msg: &str) -> NonNull<T>` / `pub fn unwrap(self) -> NonNull<T>` / `pub fn unwrap_or(self, default: NonNull<T>) -> NonNull<T>`：类似于 Option 的解包工具函数。
 - `pub fn map<U, F>(self, f: F) -> Ptr<U>` / `pub fn map_or<U, F>(self, default: U, f: F) -> U` / `pub fn map_or_else<U, D, F>(self, default: D, f: F) -> U`：类似于 Option 的指针转换和映射工具。
+- 支持指针读、写、交换、内存拷贝及偏移计算等算术操作 (`read`, `read_volatile`, `read_unaligned`, `write`, `write_volatile`, `write_unaligned`, `replace`, `swap`, `copy_to`, `copy_to_nonoverlapping`, `copy_from`, `copy_from_nonoverlapping`, `offset`, `add`, `sub`, `wrapping_offset`, `wrapping_add`, `wrapping_sub`)。
 - 实现了 `From` 支持从 `NonNull<T>`、`Option<NonNull<T>>`、`*const T`、`*mut T` 以及 `TaggedPtr<T>` 进行转换。
 - 实现了 `From<Ptr<T>>` 用于转换为 `*const T`、`*mut T`、`Option<*const T>`、`Option<*mut T>` 以及 `Option<NonNull<T>>`。
 - 实现了 `Pointer` 格式化、`PartialOrd` 与 `Ord`（按物理地址大小进行比较）。
 - 实现了 `PartialEq` 支持将 `Ptr<T>` 直接与 `NonNull<T>`、`Option<NonNull<T>>` 以及裸指针 `*const T`/`*mut T` 进行等值比较，确保完美的向前兼容性。
+- 实现了 `AsRef<Option<NonNull<T>>>`。
 
 ### `Tag`
 包裹平台专属世代计数值的类型安全包装器。
@@ -251,6 +266,8 @@ impl TreiberStack {
 - `pub const fn next(self) -> Self`：获取下一个 Tag 值（自动溢出回绕）。
 - `pub const fn max_value() -> Self`：返回当前平台布局下允许的最大标记值。
 - 实现了 `Add<usize>`、`AddAssign<usize>`、`Sub<usize>` 和 `SubAssign<usize>` 回绕算术运算符重载。
+- 实现了 `BitAnd<usize>`、`BitAnd<Tag>`、`BitAndAssign<usize>`、`BitAndAssign<Tag>`、`BitOr<usize>`、`BitOr<Tag>`、`BitOrAssign<usize>`、`BitOrAssign<Tag>`、`BitXor<usize>`、`BitXor<Tag>`、`BitXorAssign<usize>`、`BitXorAssign<Tag>` 和 `Not` 按位运算符重载。
+- 实现了 `From<u8>`、`From<u16>`、`From<u32>` 以及 `From<usize>`。
 
 ---
 
