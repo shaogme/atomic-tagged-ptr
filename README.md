@@ -99,14 +99,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.1.0"
+atomic-tagged-ptr = "0.2.0"
 ```
 
 To use in `no_std` environments, disable the default features:
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.1.0", default-features = false }
+atomic-tagged-ptr = { version = "0.2.0", default-features = false }
 ```
 
 ---
@@ -120,7 +120,7 @@ Below is a complete, concurrent lock-free Treiber Stack implementation using `At
 ```rust
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-use atomic_tagged_ptr::{AtomicTaggedPtr, Tag};
+use atomic_tagged_ptr::{AtomicTaggedPtr, TaggedPtr, Tag};
 
 /// A node in the intrusive Treiber Stack.
 pub struct StackNode {
@@ -138,7 +138,7 @@ pub struct TreiberStack {
 impl TreiberStack {
     pub fn new() -> Self {
         Self {
-            head: AtomicTaggedPtr::new(None),
+            head: AtomicTaggedPtr::new(TaggedPtr::default()),
         }
     }
 
@@ -148,14 +148,14 @@ impl TreiberStack {
         let mut bits = self.head.load(Ordering::Acquire);
         loop {
             // Link our node to the current head pointer
-            node.next.store(bits.0, bits.1, Ordering::Release);
+            node.next.store(bits, Ordering::Release);
 
             // Increment the generation tag to defend against ABA
-            let next_tag = bits.1.wrapping_add(1);
+            let next_tag = bits.tag.wrapping_add(1);
 
             match self.head.compare_exchange_weak(
                 bits,
-                (Some(node_ptr), next_tag),
+                TaggedPtr::new(Some(node_ptr), next_tag),
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
@@ -172,17 +172,17 @@ impl TreiberStack {
     pub unsafe fn pop(&self) -> Option<&StackNode> {
         let mut bits = self.head.load(Ordering::Acquire);
         loop {
-            let head_ptr = bits.0.option()?;
+            let head_ptr = bits.ptr.option()?;
 
             // Read the next node intrusively
             let next_state = head_ptr.as_ref().next.load(Ordering::Acquire);
 
             // Increment the generation tag to defend against ABA
-            let next_tag = bits.1.wrapping_add(1);
+            let next_tag = bits.tag.wrapping_add(1);
 
             match self.head.compare_exchange_weak(
                 bits,
-                (next_state.0, next_tag),
+                TaggedPtr::new(next_state.ptr, next_tag),
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
@@ -200,11 +200,21 @@ impl TreiberStack {
 
 ### `AtomicTaggedPtr<T>`
 The core struct representing an atomic tagged pointer.
-- `pub fn new<P>(ptr: P) -> Self where P: IntoOptionNonNull<T>`: Creates a new atomic tagged pointer initialized with the given pointer and tag 0. Supports `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`.
-- `pub fn load(&self, order: Ordering) -> (Ptr<T>, Tag)`: Loads the pointer wrapper `Ptr<T>` and tag atomically.
-- `pub fn store<P>(&self, ptr: P, tag: Tag, order: Ordering) where P: IntoOptionNonNull<T>`: Stores a new pointer and tag atomically.
-- `pub fn compare_exchange<P1, P2>(&self, current: (P1, Tag), new: (P2, Tag), success: Ordering, failure: Ordering) -> TaggedPtrResult<T> where P1: IntoOptionNonNull<T>, P2: IntoOptionNonNull<T>`: Compares and exchanges the pointer and tag values. Supports mixing different pointer types.
-- `pub fn compare_exchange_weak<P1, P2>(&self, current: (P1, Tag), new: (P2, Tag), success: Ordering, failure: Ordering) -> TaggedPtrResult<T> where P1: IntoOptionNonNull<T>, P2: IntoOptionNonNull<T>`: Weaker, more efficient variant of `compare_exchange` suitable for spin-loops.
+- `pub fn new(val: TaggedPtr<T>) -> Self`: Creates a new atomic tagged pointer initialized with the given `TaggedPtr`.
+- `pub fn load(&self, order: Ordering) -> TaggedPtr<T>`: Loads the `TaggedPtr<T>` (containing pointer wrapper `Ptr<T>` and tag) atomically.
+- `pub fn store(&self, val: TaggedPtr<T>, order: Ordering)`: Stores a new `TaggedPtr<T>` atomically.
+- `pub fn compare_exchange(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Compares and exchanges the pointer and tag values.
+- `pub fn compare_exchange_weak(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Weaker, more efficient variant of `compare_exchange` suitable for spin-loops.
+
+### `TaggedPtr<T>`
+A packaging representation of a pointer wrapper `Ptr<T>` and a generation tag `Tag`.
+- `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: IntoOptionNonNull<T>`: Creates a new `TaggedPtr`. Supports `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`.
+- `pub fn decompose(self) -> (Ptr<T>, Tag)`: Deconstructs the `TaggedPtr` into a tuple of `(Ptr<T>, Tag)`.
+- `pub ptr: Ptr<T>`: The underlying physical pointer wrapper.
+- `pub tag: Tag`: The underlying generation tag.
+- Implements `From` enabling conversion between `(Ptr<T>, Tag)` or `(Option<NonNull<T>>, Tag)` and `TaggedPtr`.
+- Implements `IntoOptionNonNull<T>` facilitating direct extraction of the pointer portion.
+- Manually implements `Copy`, `Clone`, and `Default` without generic bounds constraint on `T`.
 
 ### `Ptr<T>`
 A pointer wrapper returned by `AtomicTaggedPtr` operations to facilitate raw pointer and `Option` conversions.

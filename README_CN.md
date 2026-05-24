@@ -99,14 +99,14 @@
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = "0.1.0"
+atomic-tagged-ptr = "0.2.0"
 ```
 
 如果需要在 `no_std` 环境下使用，请禁用默认特性：
 
 ```toml
 [dependencies]
-atomic-tagged-ptr = { version = "0.1.0", default-features = false }
+atomic-tagged-ptr = { version = "0.2.0", default-features = false }
 ```
 
 ---
@@ -120,7 +120,7 @@ atomic-tagged-ptr = { version = "0.1.0", default-features = false }
 ```rust
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-use atomic_tagged_ptr::{AtomicTaggedPtr, Tag};
+use atomic_tagged_ptr::{AtomicTaggedPtr, TaggedPtr, Tag};
 
 /// 侵入式 Treiber 栈中的节点。
 pub struct StackNode {
@@ -138,7 +138,7 @@ pub struct TreiberStack {
 impl TreiberStack {
     pub fn new() -> Self {
         Self {
-            head: AtomicTaggedPtr::new(None),
+            head: AtomicTaggedPtr::new(TaggedPtr::default()),
         }
     }
 
@@ -148,14 +148,14 @@ impl TreiberStack {
         let mut bits = self.head.load(Ordering::Acquire);
         loop {
             // 将我们的节点链接到当前的栈顶指针上
-            node.next.store(bits.0, bits.1, Ordering::Release);
+            node.next.store(bits, Ordering::Release);
 
             // 递增世代标记，以防御 ABA 问题
-            let next_tag = bits.1.wrapping_add(1);
+            let next_tag = bits.tag.wrapping_add(1);
 
             match self.head.compare_exchange_weak(
                 bits,
-                (Some(node_ptr), next_tag),
+                TaggedPtr::new(Some(node_ptr), next_tag),
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
@@ -172,17 +172,17 @@ impl TreiberStack {
     pub unsafe fn pop(&self) -> Option<&StackNode> {
         let mut bits = self.head.load(Ordering::Acquire);
         loop {
-            let head_ptr = bits.0.option()?;
+            let head_ptr = bits.ptr.option()?;
 
             // 侵入式读取下一节点
             let next_state = head_ptr.as_ref().next.load(Ordering::Acquire);
 
             // 递增世代标记，以防御 ABA 问题
-            let next_tag = bits.1.wrapping_add(1);
+            let next_tag = bits.tag.wrapping_add(1);
 
             match self.head.compare_exchange_weak(
                 bits,
-                (next_state.0, next_tag),
+                TaggedPtr::new(next_state.ptr, next_tag),
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
@@ -200,11 +200,21 @@ impl TreiberStack {
 
 ### `AtomicTaggedPtr<T>`
 表示原子标记指针的核心结构体。
-- `pub fn new<P>(ptr: P) -> Self where P: IntoOptionNonNull<T>`：创建一个新的原子标记指针，初始化为给定的指针和标记 0。支持传入 `NonNull<T>`、`Option<NonNull<T>>`、`*const T` 和 `*mut T`。
-- `pub fn load(&self, order: Ordering) -> (Ptr<T>, Tag)`：原子地读取当前的物理指针封装 `Ptr<T>` 和世代标记。
-- `pub fn store<P>(&self, ptr: P, tag: Tag, order: Ordering) where P: IntoOptionNonNull<T>`：原子地写入新的物理指针和世代标记。
-- `pub fn compare_exchange<P1, P2>(&self, current: (P1, Tag), new: (P2, Tag), success: Ordering, failure: Ordering) -> TaggedPtrResult<T> where P1: IntoOptionNonNull<T>, P2: IntoOptionNonNull<T>`：原子地比较并交换指针与标记的值。支持混合传入不同的指针类型参数。
-- `pub fn compare_exchange_weak<P1, P2>(&self, current: (P1, Tag), new: (P2, Tag), success: Ordering, failure: Ordering) -> TaggedPtrResult<T> where P1: IntoOptionNonNull<T>, P2: IntoOptionNonNull<T>`：具有较弱语义的 `compare_exchange` 变体，允许伪失败，在自旋锁或 LL/SC 架构（如 ARM）上效率更高。
+- `pub fn new(val: TaggedPtr<T>) -> Self`：创建一个新的原子标记指针，初始化为给定的 `TaggedPtr`。
+- `pub fn load(&self, order: Ordering) -> TaggedPtr<T>`：原子地读取当前的 `TaggedPtr<T>`（包含物理指针封装 `Ptr<T>` 和世代标记）。
+- `pub fn store(&self, val: TaggedPtr<T>, order: Ordering)`：原子地写入新的 `TaggedPtr<T>`。
+- `pub fn compare_exchange(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：原子地比较并交换指针与标记的值。
+- `pub fn compare_exchange_weak(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：具有较弱语义的 `compare_exchange` 变体，允许伪失败，在自旋锁或 LL/SC 架构（如 ARM）上效率更高。
+
+### `TaggedPtr<T>`
+物理指针封装与世代标记的包装结构体。
+- `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: IntoOptionNonNull<T>`：创建一个新的 `TaggedPtr`，支持传入 `NonNull<T>`、`Option<NonNull<T>>`、`*const T` 和 `*mut T`。
+- `pub fn decompose(self) -> (Ptr<T>, Tag)`：将 `TaggedPtr` 分解为元组 `(Ptr<T>, Tag)`。
+- `pub ptr: Ptr<T>`：底层的物理指针封装。
+- `pub tag: Tag`：底层的世代标记。
+- 实现了 `From` 支持在 `(Ptr<T>, Tag)` 或 `(Option<NonNull<T>>, Tag)` 与 `TaggedPtr` 之间进行双向转换。
+- 实现了 `IntoOptionNonNull<T>`，可直接解包为其内部指针。
+- 手动实现了 `Copy`、`Clone` 和 `Default`，即使泛型参数 `T` 不满足这些 trait，`TaggedPtr<T>` 也能完美支持。
 
 ### `Ptr<T>`
 `AtomicTaggedPtr` 操作返回的指针封装结构体，便于进行裸指针和 Option 转换。

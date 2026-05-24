@@ -34,21 +34,26 @@ fn test_57bit_virtual_address_integrity() {
     ];
 
     for &original_addr in &extreme_user_space_addresses {
-        let atom = AtomicTaggedPtr::new(NonNull::new(original_addr as *mut i32));
+        let atom = AtomicTaggedPtr::new(atomic_tagged_ptr::TaggedPtr::new(
+            NonNull::new(original_addr as *mut i32),
+            Tag::new(0),
+        ));
 
         for tag in [0, 1, 127, 255, 256, 1024, 0xABCDEF] {
             // Store with arbitrary tags
             atom.store(
-                NonNull::new(original_addr as *mut i32),
-                Tag::new(tag),
+                atomic_tagged_ptr::TaggedPtr::new(
+                    NonNull::new(original_addr as *mut i32),
+                    Tag::new(tag),
+                ),
                 Ordering::Release,
             );
 
-            let (loaded_ptr, loaded_tag) = atom.load(Ordering::Acquire);
+            let loaded = atom.load(Ordering::Acquire);
 
             // Verify pointer was not corrupted or truncated!
             assert_eq!(
-                loaded_ptr.option().map(|p| p.as_ptr() as usize),
+                loaded.ptr.option().map(|p| p.as_ptr() as usize),
                 Some(original_addr as usize),
                 "Pointer address corrupted on extreme address: {:#X}",
                 original_addr as usize
@@ -56,7 +61,7 @@ fn test_57bit_virtual_address_integrity() {
 
             // Verify tag is correctly masked under the current platform layout
             assert_eq!(
-                loaded_tag.value(),
+                loaded.tag.value(),
                 tag & atomic_tagged_ptr::TAG_MASK,
                 "Tag mismatch for tag value {:#X}",
                 tag
@@ -91,7 +96,7 @@ mod concurrent_tests {
     impl TreiberStack {
         fn new() -> Self {
             Self {
-                head: AtomicTaggedPtr::new(None),
+                head: AtomicTaggedPtr::new(atomic_tagged_ptr::TaggedPtr::default()),
             }
         }
 
@@ -100,14 +105,14 @@ mod concurrent_tests {
             let mut bits = self.head.load(Ordering::Acquire);
             loop {
                 // Intrusively link our node to the current head pointer
-                node.next.store(bits.0, bits.1, Ordering::Release);
+                node.next.store(bits, Ordering::Release);
 
                 // Advance the generation tag to defend against ABA
-                let next_tag = bits.1.wrapping_add(1);
+                let next_tag = bits.tag.wrapping_add(1);
 
                 match self.head.compare_exchange_weak(
                     bits,
-                    (Some(node_ptr), next_tag),
+                    atomic_tagged_ptr::TaggedPtr::new(Some(node_ptr), next_tag),
                     Ordering::Release,
                     Ordering::Acquire,
                 ) {
@@ -120,18 +125,18 @@ mod concurrent_tests {
         fn pop(&self) -> Option<&StackNode> {
             let mut bits = self.head.load(Ordering::Acquire);
             loop {
-                let head_ptr = bits.0.option()?;
+                let head_ptr = bits.ptr.option()?;
 
                 // Read the next node intrusively.
                 // Safety: Under garbage collection or static node allocation, this node memory remains valid.
                 let next_state = unsafe { head_ptr.as_ref().next.load(Ordering::Acquire) };
 
                 // Advance generation tag to defend against ABA
-                let next_tag = bits.1.wrapping_add(1);
+                let next_tag = bits.tag.wrapping_add(1);
 
                 match self.head.compare_exchange_weak(
                     bits,
-                    (next_state.0, next_tag),
+                    atomic_tagged_ptr::TaggedPtr::new(next_state.ptr, next_tag),
                     Ordering::Release,
                     Ordering::Acquire,
                 ) {
@@ -155,7 +160,7 @@ mod concurrent_tests {
         let nodes: Vec<StackNode> = (0..num_threads * num_ops)
             .map(|i| StackNode {
                 value: i,
-                next: AtomicTaggedPtr::new(None),
+                next: AtomicTaggedPtr::new(atomic_tagged_ptr::TaggedPtr::default()),
             })
             .collect();
 

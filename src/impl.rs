@@ -26,7 +26,7 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::ptr::Ptr;
+use crate::ptr::{Ptr, TaggedPtr};
 use crate::traits::IntoOptionNonNull;
 
 // --- Platform Routing Conditional Compile Sections ---
@@ -118,7 +118,7 @@ impl From<Tag> for usize {
 }
 
 /// Type alias representing the result of atomic compare and exchange operations.
-pub type TaggedPtrResult<T> = Result<(Ptr<T>, Tag), (Ptr<T>, Tag)>;
+pub type TaggedPtrResult<T> = Result<TaggedPtr<T>, TaggedPtr<T>>;
 
 /// Type alias for raw results returned by internal platform implementations.
 pub(crate) type RawTaggedPtrResult<T> =
@@ -134,29 +134,22 @@ unsafe impl<T> Send for AtomicTaggedPtr<T> {}
 unsafe impl<T> Sync for AtomicTaggedPtr<T> {}
 
 impl<T> AtomicTaggedPtr<T> {
-    /// Creates a new `AtomicTaggedPtr` initialized with the given pointer and tag 0.
-    ///
-    /// The `ptr` parameter supports any type implementing `IntoOptionNonNull<T>`,
-    /// including `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`.
+    /// Creates a new `AtomicTaggedPtr` initialized with the given tagged pointer.
     ///
     /// # Examples
     ///
     /// ```
     /// use std::ptr::NonNull;
-    /// use atomic_tagged_ptr::AtomicTaggedPtr;
+    /// use atomic_tagged_ptr::{AtomicTaggedPtr, TaggedPtr, Tag};
     ///
     /// let value = 42;
     /// let ptr = NonNull::new(&value as *const i32 as *mut i32);
-    /// let atom = AtomicTaggedPtr::new(ptr);
+    /// let atom = AtomicTaggedPtr::new(TaggedPtr::new(ptr, Tag::new(0)));
     /// ```
     #[inline]
-    pub fn new<P>(ptr: P) -> Self
-    where
-        P: IntoOptionNonNull<T>,
-    {
-        let raw_ptr = ptr.into_option_non_null();
+    pub fn new(val: TaggedPtr<T>) -> Self {
         Self {
-            inner: AtomicTaggedPtrImpl::new(raw_ptr),
+            inner: AtomicTaggedPtrImpl::new(val.ptr.into_option_non_null(), val.tag),
         }
     }
 
@@ -166,9 +159,12 @@ impl<T> AtomicTaggedPtr<T> {
     ///
     /// Panics if `order` is `Release` or `AcqRel`.
     #[inline]
-    pub fn load(&self, order: Ordering) -> (Ptr<T>, Tag) {
+    pub fn load(&self, order: Ordering) -> TaggedPtr<T> {
         let (raw_ptr, tag) = self.inner.load(order);
-        (Ptr::new(raw_ptr), tag)
+        TaggedPtr {
+            ptr: Ptr::new(raw_ptr),
+            tag,
+        }
     }
 
     /// Stores a new pointer and tag atomically.
@@ -177,11 +173,9 @@ impl<T> AtomicTaggedPtr<T> {
     ///
     /// Panics if `order` is `Acquire` or `AcqRel`.
     #[inline]
-    pub fn store<P>(&self, ptr: P, tag: Tag, order: Ordering)
-    where
-        P: IntoOptionNonNull<T>,
-    {
-        self.inner.store(ptr.into_option_non_null(), tag, order);
+    pub fn store(&self, val: TaggedPtr<T>, order: Ordering) {
+        self.inner
+            .store(val.ptr.into_option_non_null(), val.tag, order);
     }
 
     /// Exchanges the current values with new ones if the current values match expectations.
@@ -189,25 +183,27 @@ impl<T> AtomicTaggedPtr<T> {
     /// On success, returns `Ok` containing the previous pointer and tag.
     /// On failure, returns `Err` containing the actual loaded pointer and tag.
     #[inline]
-    pub fn compare_exchange<P1, P2>(
+    pub fn compare_exchange(
         &self,
-        current: (P1, Tag),
-        new: (P2, Tag),
+        current: TaggedPtr<T>,
+        new: TaggedPtr<T>,
         success: Ordering,
         failure: Ordering,
-    ) -> TaggedPtrResult<T>
-    where
-        P1: IntoOptionNonNull<T>,
-        P2: IntoOptionNonNull<T>,
-    {
+    ) -> TaggedPtrResult<T> {
         match self.inner.compare_exchange(
-            (current.0.into_option_non_null(), current.1),
-            (new.0.into_option_non_null(), new.1),
+            (current.ptr.into_option_non_null(), current.tag),
+            (new.ptr.into_option_non_null(), new.tag),
             success,
             failure,
         ) {
-            Ok((raw_ptr, tag)) => Ok((Ptr::new(raw_ptr), tag)),
-            Err((raw_ptr, tag)) => Err((Ptr::new(raw_ptr), tag)),
+            Ok((raw_ptr, tag)) => Ok(TaggedPtr {
+                ptr: Ptr::new(raw_ptr),
+                tag,
+            }),
+            Err((raw_ptr, tag)) => Err(TaggedPtr {
+                ptr: Ptr::new(raw_ptr),
+                tag,
+            }),
         }
     }
 
@@ -216,25 +212,27 @@ impl<T> AtomicTaggedPtr<T> {
     /// This is a weaker variant of `compare_exchange` which is allowed to fail spuriously,
     /// but can be significantly more efficient on certain LL/SC-based architectures (such as ARM).
     #[inline]
-    pub fn compare_exchange_weak<P1, P2>(
+    pub fn compare_exchange_weak(
         &self,
-        current: (P1, Tag),
-        new: (P2, Tag),
+        current: TaggedPtr<T>,
+        new: TaggedPtr<T>,
         success: Ordering,
         failure: Ordering,
-    ) -> TaggedPtrResult<T>
-    where
-        P1: IntoOptionNonNull<T>,
-        P2: IntoOptionNonNull<T>,
-    {
+    ) -> TaggedPtrResult<T> {
         match self.inner.compare_exchange_weak(
-            (current.0.into_option_non_null(), current.1),
-            (new.0.into_option_non_null(), new.1),
+            (current.ptr.into_option_non_null(), current.tag),
+            (new.ptr.into_option_non_null(), new.tag),
             success,
             failure,
         ) {
-            Ok((raw_ptr, tag)) => Ok((Ptr::new(raw_ptr), tag)),
-            Err((raw_ptr, tag)) => Err((Ptr::new(raw_ptr), tag)),
+            Ok((raw_ptr, tag)) => Ok(TaggedPtr {
+                ptr: Ptr::new(raw_ptr),
+                tag,
+            }),
+            Err((raw_ptr, tag)) => Err(TaggedPtr {
+                ptr: Ptr::new(raw_ptr),
+                tag,
+            }),
         }
     }
 }
@@ -244,17 +242,17 @@ impl<T> AtomicTaggedPtr<T> {
 impl<T> Default for AtomicTaggedPtr<T> {
     #[inline]
     fn default() -> Self {
-        Self::new(None)
+        Self::new(TaggedPtr::default())
     }
 }
 
 impl<T> fmt::Debug for AtomicTaggedPtr<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Safe load under Relaxed ordering to capture debug state snapshot
-        let (ptr, tag) = self.load(Ordering::Relaxed);
+        let val = self.load(Ordering::Relaxed);
         f.debug_struct("AtomicTaggedPtr")
-            .field("pointer", &ptr)
-            .field("tag", &tag)
+            .field("pointer", &val.ptr)
+            .field("tag", &val.tag)
             .finish()
     }
 }
@@ -269,17 +267,17 @@ mod tests {
     #[test]
     fn test_default_initializer() {
         let atom: AtomicTaggedPtr<i32> = Default::default();
-        let (ptr, tag) = atom.load(Ordering::Relaxed);
-        assert!(ptr.is_none());
-        assert_eq!(tag, Tag::new(0));
+        let loaded = atom.load(Ordering::Relaxed);
+        assert!(loaded.ptr.is_none());
+        assert_eq!(loaded.tag, Tag::new(0));
     }
 
     #[test]
     fn test_debug_formatter() {
         let val = 12345;
         let ptr = NonNull::new(&val as *const i32 as *mut i32);
-        let atom = AtomicTaggedPtr::new(ptr);
-        atom.store(ptr, Tag::new(88), Ordering::Relaxed);
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(ptr, Tag::new(0)));
+        atom.store(TaggedPtr::new(ptr, Tag::new(88)), Ordering::Relaxed);
 
         let debug_str = format!("{:?}", atom);
         assert!(debug_str.contains("AtomicTaggedPtr"));
@@ -294,16 +292,16 @@ mod tests {
         let val = 777;
         let ptr = NonNull::new(&val as *const i32 as *mut i32);
         let ptr_usize = ptr.unwrap().as_ptr() as usize;
-        let atom = Arc::new(AtomicTaggedPtr::new(ptr));
+        let atom = Arc::new(AtomicTaggedPtr::new(TaggedPtr::new(ptr, Tag::new(0))));
 
         let atom_clone = Arc::clone(&atom);
         let handle = thread::spawn(move || {
             let loaded = atom_clone.load(Ordering::Acquire);
             let local_ptr = NonNull::new(ptr_usize as *mut i32);
-            if loaded.0 == local_ptr && loaded.1 == Tag::new(0) {
+            if loaded.ptr == local_ptr && loaded.tag == Tag::new(0) {
                 let _ = atom_clone.compare_exchange(
-                    (local_ptr, Tag::new(0)),
-                    (None, Tag::new(55)),
+                    TaggedPtr::new(local_ptr, Tag::new(0)),
+                    TaggedPtr::new(None, Tag::new(55)),
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                 );
@@ -314,7 +312,7 @@ mod tests {
         let final_state = atom.load(Ordering::Acquire);
 
         // Assert state was safely transitioned or remained valid
-        assert!(final_state.1 == Tag::new(55) || final_state.1 == Tag::new(0));
+        assert!(final_state.tag == Tag::new(55) || final_state.tag == Tag::new(0));
     }
 
     #[test]
@@ -326,77 +324,77 @@ mod tests {
 
         // 1. 测试 new
         // 传入 NonNull<T>
-        let atom = AtomicTaggedPtr::new(non_null1);
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), Some(non_null1));
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(non_null1, Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
 
         // 传入 Option<NonNull<T>>
-        let atom = AtomicTaggedPtr::new(Some(non_null1));
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), Some(non_null1));
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(Some(non_null1), Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
 
         // 传入 *const T
-        let atom = AtomicTaggedPtr::new(raw_ptr1);
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), Some(non_null1));
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(raw_ptr1, Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
 
         // 传入 *mut T
-        let atom = AtomicTaggedPtr::new(mut_ptr1);
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), Some(non_null1));
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(mut_ptr1, Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
 
         // 传入裸空指针 *const T
-        let atom = AtomicTaggedPtr::new(core::ptr::null::<i32>());
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), None);
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(core::ptr::null::<i32>(), Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), None);
 
         // 传入裸空指针 *mut T
-        let atom = AtomicTaggedPtr::new(core::ptr::null_mut::<i32>());
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), None);
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(core::ptr::null_mut::<i32>(), Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), None);
 
         // 传入 None
-        let atom: AtomicTaggedPtr<i32> = AtomicTaggedPtr::new(None);
-        assert_eq!(atom.load(Ordering::Relaxed).0.option(), None);
+        let atom: AtomicTaggedPtr<i32> = AtomicTaggedPtr::new(TaggedPtr::new(None, Tag::new(0)));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), None);
 
         // 2. 测试 store
-        let atom = AtomicTaggedPtr::new(None);
-        atom.store(raw_ptr1, Tag::new(10), Ordering::Relaxed);
+        let atom = AtomicTaggedPtr::new(TaggedPtr::default());
+        atom.store(TaggedPtr::new(raw_ptr1, Tag::new(10)), Ordering::Relaxed);
         let loaded = atom.load(Ordering::Relaxed);
-        assert_eq!(loaded.0.option(), Some(non_null1));
-        assert_eq!(loaded.1, Tag::new(10));
+        assert_eq!(loaded.ptr.option(), Some(non_null1));
+        assert_eq!(loaded.tag, Tag::new(10));
 
-        atom.store(None, Tag::new(20), Ordering::Relaxed);
+        atom.store(TaggedPtr::new(None, Tag::new(20)), Ordering::Relaxed);
         let loaded = atom.load(Ordering::Relaxed);
-        assert_eq!(loaded.0.option(), None);
-        assert_eq!(loaded.1, Tag::new(20));
+        assert_eq!(loaded.ptr.option(), None);
+        assert_eq!(loaded.tag, Tag::new(20));
 
         // 3. 测试 compare_exchange / compare_exchange_weak (混合不同类型的指针参数)
-        let atom = AtomicTaggedPtr::new(raw_ptr1);
+        let atom = AtomicTaggedPtr::new(TaggedPtr::new(raw_ptr1, Tag::new(0)));
         let res = atom.compare_exchange(
-            (raw_ptr1, Tag::new(0)),
-            (mut_ptr1, Tag::new(1)),
+            TaggedPtr::new(raw_ptr1, Tag::new(0)),
+            TaggedPtr::new(mut_ptr1, Tag::new(1)),
             Ordering::SeqCst,
             Ordering::SeqCst,
         );
         assert!(res.is_ok());
         let loaded = atom.load(Ordering::Relaxed);
-        assert_eq!(loaded.0.option(), Some(non_null1));
-        assert_eq!(loaded.1, Tag::new(1));
+        assert_eq!(loaded.ptr.option(), Some(non_null1));
+        assert_eq!(loaded.tag, Tag::new(1));
 
         let res = atom.compare_exchange_weak(
-            (mut_ptr1, Tag::new(1)),
-            (None, Tag::new(2)),
+            TaggedPtr::new(mut_ptr1, Tag::new(1)),
+            TaggedPtr::new(None, Tag::new(2)),
             Ordering::SeqCst,
             Ordering::SeqCst,
         );
         let mut res = res;
         while res.is_err() {
             res = atom.compare_exchange_weak(
-                (mut_ptr1, Tag::new(1)),
-                (None, Tag::new(2)),
+                TaggedPtr::new(mut_ptr1, Tag::new(1)),
+                TaggedPtr::new(None, Tag::new(2)),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             );
         }
         assert!(res.is_ok());
         let loaded = atom.load(Ordering::Relaxed);
-        assert_eq!(loaded.0.option(), None);
-        assert_eq!(loaded.1, Tag::new(2));
+        assert_eq!(loaded.ptr.option(), None);
+        assert_eq!(loaded.tag, Tag::new(2));
     }
 
     #[test]

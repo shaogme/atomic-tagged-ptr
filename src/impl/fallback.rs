@@ -75,11 +75,11 @@ unsafe impl<T: Send> Send for AtomicTaggedPtrImpl<T> {}
 unsafe impl<T: Sync> Sync for AtomicTaggedPtrImpl<T> {}
 
 impl<T> AtomicTaggedPtrImpl<T> {
-    /// Creates a new `AtomicTaggedPtrImpl` with the given pointer and an initial tag of 0.
+    /// Creates a new `AtomicTaggedPtrImpl` with the given pointer and tag.
     #[inline]
-    pub(crate) fn new(ptr: Option<NonNull<T>>) -> Self {
+    pub(crate) fn new(ptr: Option<NonNull<T>>, tag: Tag) -> Self {
         Self {
-            inner: Mutex::new((ptr, Tag::new(0))),
+            inner: Mutex::new((ptr, tag)),
             _marker: PhantomData,
         }
     }
@@ -158,7 +158,7 @@ mod tests {
     fn test_fallback_basic_operations() {
         let val = 123;
         let ptr = NonNull::new(&val as *const i32 as *mut i32);
-        let atom = AtomicTaggedPtrImpl::new(ptr);
+        let atom = AtomicTaggedPtrImpl::new(ptr, Tag::new(0));
 
         let loaded = atom.load(Ordering::Relaxed);
         assert_eq!(loaded.0, ptr);
@@ -177,7 +177,7 @@ mod tests {
         let val2 = 20;
         let ptr2 = NonNull::new(&val2 as *const i32 as *mut i32);
 
-        let atom = AtomicTaggedPtrImpl::new(ptr1);
+        let atom = AtomicTaggedPtrImpl::new(ptr1, Tag::new(0));
 
         // CAS should fail because expected tag (999) does not match actual tag (0)
         let cas_fail = atom.compare_exchange(

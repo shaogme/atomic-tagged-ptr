@@ -6,10 +6,16 @@ use core::ptr::NonNull;
 ///
 /// It provides convenient helper methods to convert into raw const/mutable pointers,
 /// access the underlying `Option<NonNull<T>>`, and supports direct comparisons.
-#[derive(Default)]
 #[repr(transparent)]
 pub struct Ptr<T> {
     inner: Option<NonNull<T>>,
+}
+
+impl<T> Default for Ptr<T> {
+    #[inline]
+    fn default() -> Self {
+        Self { inner: None }
+    }
 }
 
 impl<T> Copy for Ptr<T> {}
@@ -134,5 +140,97 @@ impl<T> IntoOptionNonNull<T> for Ptr<T> {
     #[inline]
     fn into_option_non_null(self) -> Option<NonNull<T>> {
         self.inner
+    }
+}
+
+/// A packaged representation of a pointer and a generation tag.
+/// Used for atomic operations with `AtomicTaggedPtr`.
+#[derive(PartialEq, Eq, Hash)]
+pub struct TaggedPtr<T> {
+    /// The physical pointer wrapper.
+    pub ptr: Ptr<T>,
+    /// The generation tag for ABA protection.
+    pub tag: crate::Tag,
+}
+
+impl<T> Copy for TaggedPtr<T> {}
+
+impl<T> Clone for TaggedPtr<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Default for TaggedPtr<T> {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            ptr: Ptr::default(),
+            tag: crate::Tag::default(),
+        }
+    }
+}
+
+impl<T> TaggedPtr<T> {
+    /// Creates a new `TaggedPtr` from a pointer and a tag.
+    #[inline]
+    pub fn new<P>(ptr: P, tag: crate::Tag) -> Self
+    where
+        P: IntoOptionNonNull<T>,
+    {
+        Self {
+            ptr: Ptr::new(ptr.into_option_non_null()),
+            tag,
+        }
+    }
+
+    /// Deconstructs the `TaggedPtr` into a tuple of `(Ptr<T>, Tag)`.
+    #[inline]
+    pub fn decompose(self) -> (Ptr<T>, crate::Tag) {
+        (self.ptr, self.tag)
+    }
+}
+
+impl<T> fmt::Debug for TaggedPtr<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TaggedPtr")
+            .field("ptr", &self.ptr)
+            .field("tag", &self.tag)
+            .finish()
+    }
+}
+
+impl<T> From<(Ptr<T>, crate::Tag)> for TaggedPtr<T> {
+    #[inline]
+    fn from(tuple: (Ptr<T>, crate::Tag)) -> Self {
+        Self {
+            ptr: tuple.0,
+            tag: tuple.1,
+        }
+    }
+}
+
+impl<T> From<(Option<NonNull<T>>, crate::Tag)> for TaggedPtr<T> {
+    #[inline]
+    fn from(tuple: (Option<NonNull<T>>, crate::Tag)) -> Self {
+        Self {
+            ptr: Ptr::new(tuple.0),
+            tag: tuple.1,
+        }
+    }
+}
+
+impl<T> From<TaggedPtr<T>> for (Ptr<T>, crate::Tag) {
+    #[inline]
+    fn from(tagged: TaggedPtr<T>) -> Self {
+        (tagged.ptr, tagged.tag)
+    }
+}
+
+impl<T> IntoOptionNonNull<T> for TaggedPtr<T> {
+    #[inline]
+    fn into_option_non_null(self) -> Option<NonNull<T>> {
+        self.ptr.into_option_non_null()
     }
 }

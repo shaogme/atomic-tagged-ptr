@@ -31,12 +31,15 @@ unsafe impl<T> Send for AtomicTaggedPtrImpl<T> {}
 unsafe impl<T> Sync for AtomicTaggedPtrImpl<T> {}
 
 impl<T> AtomicTaggedPtrImpl<T> {
-    /// Creates a new `AtomicTaggedPtrImpl` with the given pointer and an initial tag of 0.
+    /// Creates a new `AtomicTaggedPtrImpl` with the given pointer and tag.
     #[inline]
-    pub(crate) fn new(ptr: Option<NonNull<T>>) -> Self {
-        let ptr_val = ptr.map(|p| p.as_ptr() as u32 as u64).unwrap_or(0);
+    pub(crate) fn new(ptr: Option<NonNull<T>>, tag: Tag) -> Self {
+        let ptr_raw = ptr
+            .map(|p| p.as_ptr() as *const T)
+            .unwrap_or(core::ptr::null());
+        let bits = Self::pack(ptr_raw, tag);
         Self {
-            bits: AtomicU64::new(ptr_val),
+            bits: AtomicU64::new(bits),
             _marker: PhantomData,
         }
     }
@@ -181,7 +184,7 @@ mod tests {
     fn test_cas_loop_simulation_32bit() {
         let value = 500;
         let ptr = NonNull::new(&value as *const i32 as *mut i32);
-        let atom = AtomicTaggedPtrImpl::new(ptr);
+        let atom = AtomicTaggedPtrImpl::new(ptr, Tag::new(0));
 
         let loaded = atom.load(Ordering::Acquire);
         assert_eq!(loaded.0, ptr);
