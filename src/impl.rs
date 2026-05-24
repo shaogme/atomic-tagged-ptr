@@ -27,7 +27,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::ptr::{Ptr, TaggedPtr};
-use crate::traits::IntoOptionNonNull;
 
 // --- Platform Routing Conditional Compile Sections ---
 
@@ -147,9 +146,10 @@ impl<T> AtomicTaggedPtr<T> {
     /// let atom = AtomicTaggedPtr::new(TaggedPtr::new(ptr, Tag::new(0)));
     /// ```
     #[inline]
-    pub fn new(val: TaggedPtr<T>) -> Self {
+    pub fn new(val: impl Into<TaggedPtr<T>>) -> Self {
+        let val = val.into();
         Self {
-            inner: AtomicTaggedPtrImpl::new(val.ptr.into_option_non_null(), val.tag),
+            inner: AtomicTaggedPtrImpl::new(val.ptr.option(), val.tag),
         }
     }
 
@@ -173,9 +173,10 @@ impl<T> AtomicTaggedPtr<T> {
     ///
     /// Panics if `order` is `Acquire` or `AcqRel`.
     #[inline]
-    pub fn store(&self, val: TaggedPtr<T>, order: Ordering) {
+    pub fn store(&self, val: impl Into<TaggedPtr<T>>, order: Ordering) {
+        let val = val.into();
         self.inner
-            .store(val.ptr.into_option_non_null(), val.tag, order);
+            .store(val.ptr.option(), val.tag, order);
     }
 
     /// Exchanges the current values with new ones if the current values match expectations.
@@ -185,14 +186,16 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn compare_exchange(
         &self,
-        current: TaggedPtr<T>,
-        new: TaggedPtr<T>,
+        current: impl Into<TaggedPtr<T>>,
+        new: impl Into<TaggedPtr<T>>,
         success: Ordering,
         failure: Ordering,
     ) -> TaggedPtrResult<T> {
+        let current = current.into();
+        let new = new.into();
         match self.inner.compare_exchange(
-            (current.ptr.into_option_non_null(), current.tag),
-            (new.ptr.into_option_non_null(), new.tag),
+            (current.ptr.option(), current.tag),
+            (new.ptr.option(), new.tag),
             success,
             failure,
         ) {
@@ -214,14 +217,16 @@ impl<T> AtomicTaggedPtr<T> {
     #[inline]
     pub fn compare_exchange_weak(
         &self,
-        current: TaggedPtr<T>,
-        new: TaggedPtr<T>,
+        current: impl Into<TaggedPtr<T>>,
+        new: impl Into<TaggedPtr<T>>,
         success: Ordering,
         failure: Ordering,
     ) -> TaggedPtrResult<T> {
+        let current = current.into();
+        let new = new.into();
         match self.inner.compare_exchange_weak(
-            (current.ptr.into_option_non_null(), current.tag),
-            (new.ptr.into_option_non_null(), new.tag),
+            (current.ptr.option(), current.tag),
+            (new.ptr.option(), new.tag),
             success,
             failure,
         ) {
@@ -316,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn test_into_option_non_null_api() {
+    fn test_into_ptr_api() {
         let val1 = 111;
         let raw_ptr1 = &val1 as *const i32;
         let mut_ptr1 = &val1 as *const i32 as *mut i32;
@@ -395,6 +400,56 @@ mod tests {
         let loaded = atom.load(Ordering::Relaxed);
         assert_eq!(loaded.ptr.option(), None);
         assert_eq!(loaded.tag, Tag::new(2));
+
+        // 4. 测试 From/Into conversions 直接调用
+        let ptr_from_nn = Ptr::from(non_null1);
+        assert_eq!(ptr_from_nn.option(), Some(non_null1));
+        let ptr_from_opt: Ptr<i32> = Ptr::from(Some(non_null1));
+        assert_eq!(ptr_from_opt.option(), Some(non_null1));
+        let ptr_from_const = Ptr::from(raw_ptr1);
+        assert_eq!(ptr_from_const.option(), Some(non_null1));
+        let ptr_from_mut = Ptr::from(mut_ptr1);
+        assert_eq!(ptr_from_mut.option(), Some(non_null1));
+
+        let tagged = TaggedPtr::new(non_null1, Tag::new(123));
+        let ptr_from_tagged = Ptr::from(tagged);
+        assert_eq!(ptr_from_tagged.option(), Some(non_null1));
+
+        let opt_from_ptr = Option::<NonNull<i32>>::from(ptr_from_nn);
+        assert_eq!(opt_from_ptr, Some(non_null1));
+        let opt_from_tagged = Option::<NonNull<i32>>::from(tagged);
+        assert_eq!(opt_from_tagged, Some(non_null1));
+
+        // 5. 测试 Tuple -> TaggedPtr 转换以及 AtomicTaggedPtr 接收 Into<TaggedPtr>
+        let tag = Tag::new(456);
+        let tagged_from_nn = TaggedPtr::from((non_null1, tag));
+        assert_eq!(tagged_from_nn.ptr.option(), Some(non_null1));
+        assert_eq!(tagged_from_nn.tag, tag);
+
+        let tagged_from_opt = TaggedPtr::from((Some(non_null1), tag));
+        assert_eq!(tagged_from_opt.ptr.option(), Some(non_null1));
+        assert_eq!(tagged_from_opt.tag, tag);
+
+        let tagged_from_const = TaggedPtr::from((raw_ptr1, tag));
+        assert_eq!(tagged_from_const.ptr.option(), Some(non_null1));
+        assert_eq!(tagged_from_const.tag, tag);
+
+        let tagged_from_mut = TaggedPtr::from((mut_ptr1, tag));
+        assert_eq!(tagged_from_mut.ptr.option(), Some(non_null1));
+        assert_eq!(tagged_from_mut.tag, tag);
+
+        // 测试 AtomicTaggedPtr 操作接收 tuple
+        let atom = AtomicTaggedPtr::new((non_null1, tag));
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
+
+        atom.store((None, Tag::new(789)), Ordering::Relaxed);
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), None);
+        assert_eq!(atom.load(Ordering::Relaxed).tag, Tag::new(789));
+
+        let res = atom.compare_exchange((None, Tag::new(789)), (mut_ptr1, Tag::new(999)), Ordering::Relaxed, Ordering::Relaxed);
+        assert!(res.is_ok());
+        assert_eq!(atom.load(Ordering::Relaxed).ptr.option(), Some(non_null1));
+        assert_eq!(atom.load(Ordering::Relaxed).tag, Tag::new(999));
     }
 
     #[test]

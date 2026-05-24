@@ -200,20 +200,20 @@ impl TreiberStack {
 
 ### `AtomicTaggedPtr<T>`
 The core struct representing an atomic tagged pointer.
-- `pub fn new(val: TaggedPtr<T>) -> Self`: Creates a new atomic tagged pointer initialized with the given `TaggedPtr`.
+- `pub fn new(val: impl Into<TaggedPtr<T>>) -> Self`: Creates a new atomic tagged pointer initialized with the given tagged pointer.
 - `pub fn load(&self, order: Ordering) -> TaggedPtr<T>`: Loads the `TaggedPtr<T>` (containing pointer wrapper `Ptr<T>` and tag) atomically.
-- `pub fn store(&self, val: TaggedPtr<T>, order: Ordering)`: Stores a new `TaggedPtr<T>` atomically.
-- `pub fn compare_exchange(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Compares and exchanges the pointer and tag values.
-- `pub fn compare_exchange_weak(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Weaker, more efficient variant of `compare_exchange` suitable for spin-loops.
+- `pub fn store(&self, val: impl Into<TaggedPtr<T>>, order: Ordering)`: Stores a new tagged pointer atomically.
+- `pub fn compare_exchange(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Compares and exchanges the pointer and tag values.
+- `pub fn compare_exchange_weak(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`: Weaker, more efficient variant of `compare_exchange` suitable for spin-loops.
 
 ### `TaggedPtr<T>`
 A packaging representation of a pointer wrapper `Ptr<T>` and a generation tag `Tag`.
-- `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: IntoOptionNonNull<T>`: Creates a new `TaggedPtr`. Supports `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`.
+- `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: Into<Ptr<T>>`: Creates a new `TaggedPtr`. Supports any type implementing `Into<Ptr<T>>` (such as `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, and `*mut T`).
 - `pub fn decompose(self) -> (Ptr<T>, Tag)`: Deconstructs the `TaggedPtr` into a tuple of `(Ptr<T>, Tag)`.
 - `pub ptr: Ptr<T>`: The underlying physical pointer wrapper.
 - `pub tag: Tag`: The underlying generation tag.
-- Implements `From` enabling conversion between `(Ptr<T>, Tag)` or `(Option<NonNull<T>>, Tag)` and `TaggedPtr`.
-- Implements `IntoOptionNonNull<T>` facilitating direct extraction of the pointer portion.
+- Implements `From` enabling conversion from `(Ptr<T>, Tag)`, `(Option<NonNull<T>>, Tag)`, `(NonNull<T>, Tag)`, `(*const T, Tag)`, or `(*mut T, Tag)` to `TaggedPtr`.
+- Implements `Into<Ptr<T>>` and `Into<Option<NonNull<T>>>` facilitating direct extraction of the pointer portion.
 - Manually implements `Copy`, `Clone`, and `Default` without generic bounds constraint on `T`.
 
 ### `Ptr<T>`
@@ -223,11 +223,9 @@ A pointer wrapper returned by `AtomicTaggedPtr` operations to facilitate raw poi
 - `pub fn option(self) -> Option<NonNull<T>>`: Extracts the underlying `Option<NonNull<T>>`.
 - `pub fn as_option(self) -> Option<NonNull<T>>`: Extracts the underlying `Option<NonNull<T>>`.
 - `pub fn is_null(self) -> bool` / `pub fn is_some(self) -> bool` / `pub fn is_none(self) -> bool`: Query the pointer status.
+- Implements `From` for converting from `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, `*mut T`, and `TaggedPtr<T>`.
+- Implements `Into<Option<NonNull<T>>>` for extracting the underlying pointer.
 - Implements `PartialEq` allowing direct comparisons between `Ptr<T>` and `NonNull<T>`, `Option<NonNull<T>>`, or raw `*const T`/`*mut T` pointers.
-
-### `IntoOptionNonNull<T>`
-A trait implemented by types that can be unified into `Option<NonNull<T>>`. 
-It is implemented for `NonNull<T>`, `Option<NonNull<T>>`, `*const T`, `*mut T`, and `Ptr<T>`.
 
 ### `Tag`
 A wrapper around the platform-specific generation count.

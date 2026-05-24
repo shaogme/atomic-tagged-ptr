@@ -16,11 +16,9 @@ pub use r#impl::TAG_MASK;
 pub use r#impl::Tag;
 pub use ptr::Ptr;
 pub use ptr::TaggedPtr;
-pub use traits::IntoOptionNonNull;
 
 mod r#impl;
 mod ptr;
-mod traits;
 
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]

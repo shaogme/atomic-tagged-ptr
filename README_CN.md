@@ -200,20 +200,20 @@ impl TreiberStack {
 
 ### `AtomicTaggedPtr<T>`
 表示原子标记指针的核心结构体。
-- `pub fn new(val: TaggedPtr<T>) -> Self`：创建一个新的原子标记指针，初始化为给定的 `TaggedPtr`。
+- `pub fn new(val: impl Into<TaggedPtr<T>>) -> Self`：创建一个新的原子标记指针，初始化为给定的标记指针。
 - `pub fn load(&self, order: Ordering) -> TaggedPtr<T>`：原子地读取当前的 `TaggedPtr<T>`（包含物理指针封装 `Ptr<T>` 和世代标记）。
-- `pub fn store(&self, val: TaggedPtr<T>, order: Ordering)`：原子地写入新的 `TaggedPtr<T>`。
-- `pub fn compare_exchange(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：原子地比较并交换指针与标记的值。
-- `pub fn compare_exchange_weak(&self, current: TaggedPtr<T>, new: TaggedPtr<T>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：具有较弱语义的 `compare_exchange` 变体，允许伪失败，在自旋锁或 LL/SC 架构（如 ARM）上效率更高。
+- `pub fn store(&self, val: impl Into<TaggedPtr<T>>, order: Ordering)`：原子地写入新的标记指针。
+- `pub fn compare_exchange(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：原子地比较并交换指针与标记的值。
+- `pub fn compare_exchange_weak(&self, current: impl Into<TaggedPtr<T>>, new: impl Into<TaggedPtr<T>>, success: Ordering, failure: Ordering) -> TaggedPtrResult<T>`：具有较弱语义的 `compare_exchange` 变体，允许伪失败，在自旋锁或 LL/SC 架构（如 ARM）上效率更高。
 
 ### `TaggedPtr<T>`
 物理指针封装与世代标记的包装结构体。
-- `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: IntoOptionNonNull<T>`：创建一个新的 `TaggedPtr`，支持传入 `NonNull<T>`、`Option<NonNull<T>>`、`*const T` 和 `*mut T`。
+- `pub fn new<P>(ptr: P, tag: Tag) -> Self where P: Into<Ptr<T>>`：创建一个新的 `TaggedPtr`，支持传入任何实现了 `Into<Ptr<T>>` 的类型（如 `NonNull<T>`、`Option<NonNull<T>>`、`*const T` 和 `*mut T`）。
 - `pub fn decompose(self) -> (Ptr<T>, Tag)`：将 `TaggedPtr` 分解为元组 `(Ptr<T>, Tag)`。
 - `pub ptr: Ptr<T>`：底层的物理指针封装。
 - `pub tag: Tag`：底层的世代标记。
-- 实现了 `From` 支持在 `(Ptr<T>, Tag)` 或 `(Option<NonNull<T>>, Tag)` 与 `TaggedPtr` 之间进行双向转换。
-- 实现了 `IntoOptionNonNull<T>`，可直接解包为其内部指针。
+- 实现了 `From` 支持在 `(Ptr<T>, Tag)`、`(Option<NonNull<T>>, Tag)`、`(NonNull<T>, Tag)`、`(*const T, Tag)` 或 `(*mut T, Tag)` 与 `TaggedPtr` 之间进行转换。
+- 实现了 `Into<Ptr<T>>` 与 `Into<Option<NonNull<T>>>`，便于直接解包/转换其内部物理指针。
 - 手动实现了 `Copy`、`Clone` 和 `Default`，即使泛型参数 `T` 不满足这些 trait，`TaggedPtr<T>` 也能完美支持。
 
 ### `Ptr<T>`
@@ -223,11 +223,9 @@ impl TreiberStack {
 - `pub fn option(self) -> Option<NonNull<T>>`：获取底层的 `Option<NonNull<T>>`。
 - `pub fn as_option(self) -> Option<NonNull<T>>`：获取底层的 `Option<NonNull<T>>`。
 - `pub fn is_null(self) -> bool` / `pub fn is_some(self) -> bool` / `pub fn is_none(self) -> bool`：判断指针是否为空。
+- 实现了 `From` 支持从 `NonNull<T>`、`Option<NonNull<T>>`、`*const T`、`*mut T` 以及 `TaggedPtr<T>` 进行转换。
+- 实现了 `Into<Option<NonNull<T>>>`，用于提取底层指针。
 - 实现了 `PartialEq` 支持将 `Ptr<T>` 直接与 `NonNull<T>`、`Option<NonNull<T>>` 以及裸指针 `*const T`/`*mut T` 进行等值比较，确保完美的向前兼容性。
-
-### `IntoOptionNonNull<T>`
-用于在 API 接口中统一不同指针表示形态的 trait。
-已经为 `NonNull<T>`、`Option<NonNull<T>>`、`*const T`、`*mut T` 以及 `Ptr<T>` 实现了此 trait。
 
 ### `Tag`
 包裹平台专属世代计数值的类型安全包装器。
