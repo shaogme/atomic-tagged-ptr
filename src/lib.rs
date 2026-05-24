@@ -28,4 +28,3 @@ mod readme_doctests {}
 #[cfg(doctest)]
 #[doc = include_str!("../README_CN.md")]
 mod readme_cn_doctests {}
-
