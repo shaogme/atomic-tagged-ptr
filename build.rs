@@ -22,14 +22,16 @@ fn main() {
 
     if use_fallback {
         println!("cargo::rustc-cfg=atomic_fallback");
-        println!("cargo::warning=[atomic-tagged-ptr] Native 64-bit atomics are unsupported or forced fallback is set. Enabling Mutex-based fallback implementation.");
+        println!(
+            "cargo::warning=[atomic-tagged-ptr] Native 64-bit atomics are unsupported or forced fallback is set. Enabling Mutex-based fallback implementation."
+        );
         return;
     }
 
     let mut is_48 = false;
 
     if target_pointer_width == "64" {
-        'detect: loop {
+        'detect: {
             let print_autodetect = env::var("ATOMIC_TAGGED_PTR_PRINT_AUTODETECT")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);
@@ -38,21 +40,31 @@ fn main() {
                 if force_val == "48" {
                     is_48 = true;
                     println!("cargo::rustc-cfg=virt_addr_48");
-                    println!("cargo::warning=[atomic-tagged-ptr] Environment override: Enabling 48-bit virtual address layout (16-bit tag, 256x stronger ABA protection).");
+                    println!(
+                        "cargo::warning=[atomic-tagged-ptr] Environment override: Enabling 48-bit virtual address layout (16-bit tag, 256x stronger ABA protection)."
+                    );
                     break 'detect;
                 } else if force_val == "57" {
-                    println!("cargo::warning=[atomic-tagged-ptr] Environment override: Enabling 57-bit virtual address layout (8-bit tag).");
+                    println!(
+                        "cargo::warning=[atomic-tagged-ptr] Environment override: Enabling 57-bit virtual address layout (8-bit tag)."
+                    );
                     break 'detect;
                 }
             }
 
             let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
-            
-            if target_os == "macos" || target_os == "ios" || target_os == "watchos" || target_os == "tvos" {
+
+            if target_os == "macos"
+                || target_os == "ios"
+                || target_os == "watchos"
+                || target_os == "tvos"
+            {
                 is_48 = true;
                 println!("cargo::rustc-cfg=virt_addr_48");
                 if print_autodetect {
-                    println!("cargo::warning=[atomic-tagged-ptr] Auto-detection: Apple platform detected, enabling 48-bit virtual address layout (16-bit tag).");
+                    println!(
+                        "cargo::warning=[atomic-tagged-ptr] Auto-detection: Apple platform detected, enabling 48-bit virtual address layout (16-bit tag)."
+                    );
                 }
                 break 'detect;
             }
@@ -68,24 +80,28 @@ fn main() {
                         is_48 = true;
                         println!("cargo::rustc-cfg=virt_addr_48");
                         if print_autodetect {
-                            println!("cargo::warning=[atomic-tagged-ptr] Auto-detection: Windows 5-level paging (LA57) is NOT active in the current OS, enabling 48-bit virtual address layout (16-bit tag).");
+                            println!(
+                                "cargo::warning=[atomic-tagged-ptr] Auto-detection: Windows 5-level paging (LA57) is NOT active in the current OS, enabling 48-bit virtual address layout (16-bit tag)."
+                            );
                         }
                         break 'detect;
                     }
-                } else if target_os == "linux" {
-                    if !linux_la57_enabled() {
-                        is_48 = true;
-                        println!("cargo::rustc-cfg=virt_addr_48");
-                        if print_autodetect {
-                            println!("cargo::warning=[atomic-tagged-ptr] Auto-detection: Linux 5-level paging is NOT active in the current kernel, enabling 48-bit virtual address layout (16-bit tag).");
-                        }
-                        break 'detect;
+                } else if target_os == "linux" && !linux_la57_enabled() {
+                    is_48 = true;
+                    println!("cargo::rustc-cfg=virt_addr_48");
+                    if print_autodetect {
+                        println!(
+                            "cargo::warning=[atomic-tagged-ptr] Auto-detection: Linux 5-level paging is NOT active in the current kernel, enabling 48-bit virtual address layout (16-bit tag)."
+                        );
                     }
+                    break 'detect;
                 }
             }
 
             if print_autodetect {
-                println!("cargo::warning=[atomic-tagged-ptr] Auto-detection: Unable to determine virtual address space limits safely, defaulting to conservative 57-bit layout (8-bit tag).");
+                println!(
+                    "cargo::warning=[atomic-tagged-ptr] Auto-detection: Unable to determine virtual address space limits safely, defaulting to conservative 57-bit layout (8-bit tag)."
+                );
             }
             break 'detect;
         }
@@ -95,10 +111,16 @@ fn main() {
     let expect_57 = env::var("ATOMIC_TAGGED_PTR_TEST_EXPECT_57").is_ok();
 
     if expect_48 {
-        assert!(is_48, "[atomic-tagged-ptr] Compile-time assertion failed: Expected 48-bit virtual address layout, but detected 57-bit layout!");
+        assert!(
+            is_48,
+            "[atomic-tagged-ptr] Compile-time assertion failed: Expected 48-bit virtual address layout, but detected 57-bit layout!"
+        );
     }
     if expect_57 {
-        assert!(!is_48, "[atomic-tagged-ptr] Compile-time assertion failed: Expected 57-bit virtual address layout, but detected 48-bit layout!");
+        assert!(
+            !is_48,
+            "[atomic-tagged-ptr] Compile-time assertion failed: Expected 57-bit virtual address layout, but detected 48-bit layout!"
+        );
     }
 }
 
@@ -153,7 +175,14 @@ fn linux_la57_enabled() -> bool {
         }
 
         unsafe extern "C" {
-            fn mmap(addr: *mut std::ffi::c_void, len: usize, prot: std::ffi::c_int, flags: std::ffi::c_int, fd: std::ffi::c_int, offset: isize) -> *mut std::ffi::c_void;
+            fn mmap(
+                addr: *mut std::ffi::c_void,
+                len: usize,
+                prot: std::ffi::c_int,
+                flags: std::ffi::c_int,
+                fd: std::ffi::c_int,
+                offset: isize,
+            ) -> *mut std::ffi::c_void;
             fn munmap(addr: *mut std::ffi::c_void, len: usize) -> std::ffi::c_int;
         }
         const MAP_ANONYMOUS: std::ffi::c_int = 0x20;
@@ -164,7 +193,14 @@ fn linux_la57_enabled() -> bool {
         let hint_addr = 0x0010_0000_0000_0000 as *mut std::ffi::c_void;
         let map_len = 4096;
         unsafe {
-            let ret = mmap(hint_addr, map_len, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+            let ret = mmap(
+                hint_addr,
+                map_len,
+                PROT_READ | PROT_WRITE,
+                MAP_ANONYMOUS | MAP_PRIVATE,
+                -1,
+                0,
+            );
             if ret != -1isize as *mut std::ffi::c_void {
                 let addr_val = ret as usize;
                 munmap(ret, map_len);

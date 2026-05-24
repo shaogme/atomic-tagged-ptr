@@ -10,10 +10,10 @@
 //! (with user-space address limit usually at `007f_ffff_ffff_ffff`), using the lower 56 bits for the
 //! physical pointer ensures 100% address integrity and completely avoids truncation or pointer corruption.
 
+use super::Tag;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use super::Tag;
 
 /// Masks for bitwise packing and unpacking.
 #[cfg(virt_addr_48)]
@@ -85,7 +85,11 @@ impl<T> AtomicTaggedPtrImpl<T> {
             None
         } else {
             // Safety: The pointer address is safely reconstructed from the lower bits preserving strict provenance
-            unsafe { Some(NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(ptr_val))) }
+            unsafe {
+                Some(NonNull::new_unchecked(
+                    core::ptr::with_exposed_provenance_mut(ptr_val),
+                ))
+            }
         };
 
         (ptr, tag)
@@ -122,7 +126,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
-    ) -> super::TaggedPtrResult<T> {
+    ) -> super::RawTaggedPtrResult<T> {
         let cur_raw = current
             .0
             .map(|p| p.as_ptr() as *const T)
@@ -154,7 +158,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
-    ) -> super::TaggedPtrResult<T> {
+    ) -> super::RawTaggedPtrResult<T> {
         let cur_raw = current
             .0
             .map(|p| p.as_ptr() as *const T)
@@ -231,8 +235,12 @@ mod tests {
         let new_value = 200;
         let new_ptr = NonNull::new(&new_value as *const i32 as *mut i32);
 
-        let cas_res =
-            atom.compare_exchange((ptr, Tag::new(0)), (new_ptr, Tag::new(1)), Ordering::SeqCst, Ordering::SeqCst);
+        let cas_res = atom.compare_exchange(
+            (ptr, Tag::new(0)),
+            (new_ptr, Tag::new(1)),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
 
         assert!(cas_res.is_ok());
         let loaded_new = atom.load(Ordering::Acquire);
@@ -241,7 +249,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Attempted to pack a pointer exceeding the valid virtual address space limits!")]
+    #[should_panic(
+        expected = "Attempted to pack a pointer exceeding the valid virtual address space limits!"
+    )]
     fn test_invalid_high_address_panic() {
         // Construct an address that definitely exceeds PTR_MASK on either layout
         let invalid_addr = (!PTR_MASK | 0x1) as *const i32;

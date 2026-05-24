@@ -14,12 +14,12 @@ compile_error!(
      Please enable the `std` feature in your Cargo.toml."
 );
 
+use super::Tag;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 #[cfg(feature = "std")]
 use std::sync::Mutex;
-use core::sync::atomic::Ordering;
-use super::Tag;
 
 pub const TAG_MASK: usize = usize::MAX;
 
@@ -50,14 +50,18 @@ impl<T> AtomicTaggedPtrImpl<T> {
     pub(crate) fn load(&self, order: Ordering) -> (Option<NonNull<T>>, Tag) {
         let guard = self.inner.lock().unwrap();
         let val = *guard;
-        core::sync::atomic::fence(order);
+        if order != Ordering::Relaxed {
+            core::sync::atomic::fence(order);
+        }
         val
     }
 
     /// Atomically stores a new tagged pointer.
     #[inline]
     pub(crate) fn store(&self, ptr: Option<NonNull<T>>, tag: Tag, order: Ordering) {
-        core::sync::atomic::fence(order);
+        if order != Ordering::Relaxed {
+            core::sync::atomic::fence(order);
+        }
         let mut guard = self.inner.lock().unwrap();
         *guard = (ptr, tag);
     }
@@ -72,16 +76,20 @@ impl<T> AtomicTaggedPtrImpl<T> {
         new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
-    ) -> super::TaggedPtrResult<T> {
+    ) -> super::RawTaggedPtrResult<T> {
         let mut guard = self.inner.lock().unwrap();
         let actual = *guard;
 
         if actual.0 == current.0 && actual.1 == current.1 {
-            core::sync::atomic::fence(success);
+            if success != Ordering::Relaxed {
+                core::sync::atomic::fence(success);
+            }
             *guard = new;
             Ok(actual)
         } else {
-            core::sync::atomic::fence(failure);
+            if failure != Ordering::Relaxed {
+                core::sync::atomic::fence(failure);
+            }
             Err(actual)
         }
     }
@@ -96,7 +104,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
-    ) -> super::TaggedPtrResult<T> {
+    ) -> super::RawTaggedPtrResult<T> {
         self.compare_exchange(current, new, success, failure)
     }
 }
@@ -131,14 +139,22 @@ mod tests {
         let atom = AtomicTaggedPtrImpl::new(ptr1);
 
         // CAS should fail because expected tag (999) does not match actual tag (0)
-        let cas_fail =
-            atom.compare_exchange((ptr1, Tag::new(999)), (ptr2, Tag::new(100)), Ordering::SeqCst, Ordering::SeqCst);
+        let cas_fail = atom.compare_exchange(
+            (ptr1, Tag::new(999)),
+            (ptr2, Tag::new(100)),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
         assert!(cas_fail.is_err());
         assert_eq!(cas_fail.unwrap_err(), (ptr1, Tag::new(0)));
 
         // CAS should succeed because both pointer and tag match perfectly
-        let cas_success =
-            atom.compare_exchange((ptr1, Tag::new(0)), (ptr2, Tag::new(200)), Ordering::SeqCst, Ordering::SeqCst);
+        let cas_success = atom.compare_exchange(
+            (ptr1, Tag::new(0)),
+            (ptr2, Tag::new(200)),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
         assert!(cas_success.is_ok());
         assert_eq!(cas_success.unwrap(), (ptr1, Tag::new(0)));
 

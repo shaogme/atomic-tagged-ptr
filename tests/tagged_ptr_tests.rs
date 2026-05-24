@@ -10,10 +10,9 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+use atomic_tagged_ptr::{AtomicTaggedPtr, Tag};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-use atomic_tagged_ptr::{AtomicTaggedPtr, Tag};
-
 
 // --- 1. Simulation of High 57-bit (5-Level Paging) Address Integrity ---
 
@@ -49,7 +48,7 @@ fn test_57bit_virtual_address_integrity() {
 
             // Verify pointer was not corrupted or truncated!
             assert_eq!(
-                loaded_ptr.map(|p| p.as_ptr() as usize),
+                loaded_ptr.option().map(|p| p.as_ptr() as usize),
                 Some(original_addr as usize),
                 "Pointer address corrupted on extreme address: {:#X}",
                 original_addr as usize
@@ -121,7 +120,7 @@ mod concurrent_tests {
         fn pop(&self) -> Option<&StackNode> {
             let mut bits = self.head.load(Ordering::Acquire);
             loop {
-                let head_ptr = bits.0?;
+                let head_ptr = bits.0.option()?;
 
                 // Read the next node intrusively.
                 // Safety: Under garbage collection or static node allocation, this node memory remains valid.

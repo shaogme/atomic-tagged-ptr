@@ -11,7 +11,11 @@
 extern crate std;
 
 pub use r#impl::AtomicTaggedPtr;
-pub use r#impl::Tag;
 pub use r#impl::TAG_MASK;
+pub use r#impl::Tag;
+pub use ptr::Ptr;
+pub use traits::IntoOptionNonNull;
 
-pub mod r#impl;
+mod r#impl;
+mod ptr;
+mod traits;

@@ -10,10 +10,10 @@
 //! Since pointer addresses under 32-bit operating systems fit perfectly inside 32 bits, this layout
 //! does not make any assumptions about virtual address zero-bits and retains 100% address precision.
 
+use super::Tag;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU64, Ordering};
-use super::Tag;
 
 pub const TAG_MASK: usize = 0xFFFF_FFFF;
 
@@ -59,7 +59,11 @@ impl<T> AtomicTaggedPtrImpl<T> {
             None
         } else {
             // Safety: The pointer address is safely reconstructed from the lower bits preserving strict provenance
-            unsafe { Some(NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(ptr_val))) }
+            unsafe {
+                Some(NonNull::new_unchecked(
+                    core::ptr::with_exposed_provenance_mut(ptr_val),
+                ))
+            }
         };
 
         (ptr, tag)
@@ -96,7 +100,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
-    ) -> super::TaggedPtrResult<T> {
+    ) -> super::RawTaggedPtrResult<T> {
         let cur_raw = current
             .0
             .map(|p| p.as_ptr() as *const T)
@@ -128,7 +132,7 @@ impl<T> AtomicTaggedPtrImpl<T> {
         new: (Option<NonNull<T>>, Tag),
         success: Ordering,
         failure: Ordering,
-    ) -> super::TaggedPtrResult<T> {
+    ) -> super::RawTaggedPtrResult<T> {
         let cur_raw = current
             .0
             .map(|p| p.as_ptr() as *const T)

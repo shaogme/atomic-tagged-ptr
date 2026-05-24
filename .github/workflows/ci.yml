@@ -135,3 +135,28 @@ jobs:
             -virtfs local,path=$GITHUB_WORKSPACE,security_model=none,mount_tag=workspace,multidevs=remap \
             -virtfs local,path=$HOME,security_model=none,mount_tag=home,multidevs=remap
           if [ "$(cat test_exit_code)" -eq 0 ]; then exit 1; else true; fi
+
+  linux-tests:
+    name: Normal Linux Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@main
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Forced 48-bit Virtual Address Layout
+        run: ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR=48 ATOMIC_TAGGED_PTR_TEST_EXPECT_48=1 cargo test
+
+      - name: Test Forced 57-bit Virtual Address Layout
+        run: ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR=57 ATOMIC_TAGGED_PTR_TEST_EXPECT_57=1 cargo test
+
+      - name: Test Fallback Mutex Implementation
+        run: RUSTFLAGS='--cfg atomic_fallback' cargo test
+
+      - name: Test Forced 48-bit Virtual Address Layout without std
+        run: ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR=48 ATOMIC_TAGGED_PTR_TEST_EXPECT_48=1 cargo test --no-default-features
+
+      - name: Test Forced 57-bit Virtual Address Layout without std
+        run: ATOMIC_TAGGED_PTR_FORCE_VIRT_ADDR=57 ATOMIC_TAGGED_PTR_TEST_EXPECT_57=1 cargo test --no-default-features
